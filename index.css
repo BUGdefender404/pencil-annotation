@@ -1,0 +1,224 @@
+/* Pencil Annotation plugin styles */
+
+/* ---------- overlay inside each editor ---------- */
+.pa-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+    overflow: hidden;
+    contain: strict;
+}
+
+.pa-overlay--hidden {
+    display: none;
+}
+
+.pa-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+/* highlighter layers multiply so text/ink below stays visible through the mark */
+.pa-canvas--multiply {
+    mix-blend-mode: multiply;
+}
+
+.pa-capture {
+    position: absolute;
+    pointer-events: none;
+    touch-action: pan-y;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    cursor: crosshair;
+}
+
+.pa-capture--active {
+    pointer-events: auto;
+}
+
+/* ---------- floating entry handle (mobile / desktop) ---------- */
+.pa-handle {
+    position: fixed;
+    z-index: 1000;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: none;
+    padding: 0;
+    background: rgba(28, 28, 32, 0.88);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.pa-handle:active {
+    transform: scale(0.94);
+}
+
+.pa-handle svg {
+    width: 24px;
+    height: 24px;
+}
+
+/* drawing-mode-on look */
+.pa-handle--on {
+    background: #6366f1;
+}
+
+/* ---------- floating toolbar palette ---------- */
+.pa-toolbar {
+    position: fixed;
+    z-index: 1001;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px;
+    border-radius: 16px;
+    background: rgba(28, 28, 32, 0.92);
+    color: #fff;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.pa-toolbar__group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.pa-toolbar__sep {
+    width: 1px;
+    height: 22px;
+    margin: 0 4px;
+    background: rgba(255, 255, 255, 0.16);
+    flex: none;
+}
+
+.pa-btn {
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 11px;
+    padding: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex: none;
+}
+
+.pa-btn svg {
+    width: 21px;
+    height: 21px;
+    pointer-events: none;
+}
+
+.pa-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.pa-btn--active {
+    background: #6366f1;
+    color: #fff;
+}
+
+.pa-btn:disabled {
+    opacity: 0.32;
+    cursor: default;
+}
+
+.pa-btn:disabled:hover {
+    background: transparent;
+}
+
+/* tool options row (colors / widths) */
+.pa-toolbar__options {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px;
+    max-width: 46vw;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.pa-toolbar__options::-webkit-scrollbar {
+    display: none;
+}
+
+.pa-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    flex: none;
+    position: relative;
+}
+
+.pa-swatch--active {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.pa-width {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    padding: 0;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex: none;
+}
+
+.pa-width:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.pa-width i {
+    display: block;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.pa-width--active {
+    background: rgba(99, 102, 241, 0.55);
+}
+
+/* selection action buttons shown while a stroke is selected */
+.pa-toolbar__selection {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+/* ---------- topbar icon ---------- */
+.pa-topbar-icon svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
