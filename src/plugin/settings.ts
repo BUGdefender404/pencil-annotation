@@ -7,6 +7,8 @@ export interface PencilSettings {
     eraserRadius: number;
     penColor: string;
     penWidth: number;
+    /** upper bound of the pen width slider */
+    penWidthMax: number;
     hlColor: string;
     hlWidth: number;
 }
@@ -17,7 +19,8 @@ export const DEFAULT_SETTINGS: PencilSettings = {
     showEraserCursor: true,
     eraserRadius: 20,
     penColor: "#1e1e1e",
-    penWidth: 5, // sits on the toolbar slider grid (min 5, step 5)
+    penWidth: 5, // sits within the pen slider range (min 1)
+    penWidthMax: 20,
     hlColor: "#ffd400",
     hlWidth: 20,
 };

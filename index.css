@@ -304,8 +304,16 @@
 }
 
 /* ---------- topbar icon ---------- */
-.pa-topbar-icon svg {
+svg.pa-topbar-svg {
     width: 16px;
     height: 16px;
-    fill: currentColor;
+}
+
+/* SiYuan's base.css ships a bare `svg { fill: currentcolor }` that overrides our
+   fill="none" attribute and turns every stroke icon into a solid blob. */
+.pa-toolbar svg,
+.pa-handle svg,
+svg.pa-topbar-svg {
+    fill: none;
+    stroke: currentColor;
 }

@@ -5,9 +5,9 @@ import {ICONS} from "./icons";
 export const PEN_COLORS = ["#1e1e1e", "#e03131", "#2f6fed", "#2f9e44", "#f76707", "#9c36b5"];
 export const HL_COLORS = ["#ffd400", "#ff922b", "#69db7c", "#4dabf7", "#f783ac"];
 
-/** slider ranges for stroke width / eraser size — continuous adjustment with a coarse step */
+/** slider ranges for stroke width / eraser size — pen max is settings-driven */
 export const WIDTH_RANGE = {
-    pen: {min: 5, max: 50, step: 5},
+    pen: {min: 1, max: 20, step: 1}, // max overridden by settings.penWidthMax
     highlighter: {min: 10, max: 60, step: 5},
     eraser: {min: 10, max: 50, step: 5},
 } as const;
@@ -253,7 +253,12 @@ export class Palette {
         value: number,
         dotColor: string,
     ): HTMLDivElement {
-        const range = WIDTH_RANGE[kind];
+        let range: {min: number; max: number; step: number} = WIDTH_RANGE[kind];
+        if (kind === "pen") {
+            // cap is user-adjustable in settings
+            const max = Math.max(range.min, Math.round(this.deps.settings.penWidthMax || 20));
+            range = {min: range.min, max, step: range.step};
+        }
         const wrap = document.createElement("div");
         wrap.className = "pa-width";
 

@@ -44,5 +44,7 @@
   "pen": "钢笔",
   "highlighter": "荧光笔",
   "eraser": "橡皮擦",
-  "select": "选择"
+  "select": "选择",
+  "settingPenWidthMax": "钢笔滑杆上限（px）",
+  "settingPenWidthMaxHint": "工具栏粗细滑杆的最大值，默认 20，可自行调大"
 }

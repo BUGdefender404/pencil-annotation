@@ -44,5 +44,7 @@
   "pen": "Pen",
   "highlighter": "Highlighter",
   "eraser": "Eraser",
-  "select": "Select"
+  "select": "Select",
+  "settingPenWidthMax": "Pen slider max width (px)",
+  "settingPenWidthMaxHint": "Maximum of the width slider on the toolbar; default 20"
 }

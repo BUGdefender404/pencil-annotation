@@ -23,6 +23,8 @@ export interface OverlaySettings {
     doubleTapToggle: boolean;
     showEraserCursor: boolean;
     eraserRadius: number;
+    /** upper bound of the pen width slider (user adjustable in settings) */
+    penWidthMax: number;
 }
 
 export interface OverlayConfig {

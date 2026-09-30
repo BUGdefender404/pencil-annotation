@@ -8,7 +8,7 @@ import {
 } from "siyuan";
 import {DocOverlay, type OverlayConfig, type OverlaySettings, type ProtyleLike} from "./overlay/overlay";
 import {Palette, type PaletteAction} from "./overlay/toolbar";
-import {ICONS} from "./overlay/icons";
+import {TOPBAR_SVG} from "./overlay/icons";
 import {loadPayload, savePayload} from "./plugin/api";
 import {exportStrokesDialog} from "./plugin/exportDialog";
 import {
@@ -63,13 +63,15 @@ export default class PencilAnnotationPlugin extends Plugin {
             doubleTapToggle: this.settings.doubleTapToggle,
             showEraserCursor: this.settings.showEraserCursor,
             eraserRadius: this.settings.eraserRadius,
+            penWidthMax: this.settings.penWidthMax,
         };
         const session = loadSession();
         this.config = {
             tool: (["pen", "highlighter", "eraser", "select"] as ToolId[]).includes(session.tool as ToolId)
                 ? (session.tool as ToolId) : "pen",
             penColor: session.penColor || this.settings.penColor,
-            penWidth: session.penWidth || this.settings.penWidth,
+            // clamp stale session widths that exceed the (possibly new) slider cap
+            penWidth: Math.min(session.penWidth || this.settings.penWidth, this.settings.penWidthMax),
             hlColor: session.hlColor || this.settings.hlColor,
             hlWidth: session.hlWidth || this.settings.hlWidth,
         };
@@ -111,7 +113,7 @@ export default class PencilAnnotationPlugin extends Plugin {
 
         if (["desktop", "desktop-window", "browser-desktop"].includes(getFrontend())) {
             this.addTopBar({
-                icon: ICONS.penStroke,
+                icon: TOPBAR_SVG,
                 title: this.t("topbarTitle"),
                 callback: () => this.toggleMode(),
             });
@@ -490,7 +492,16 @@ export default class PencilAnnotationPlugin extends Plugin {
             mkNumber(() => this.config.penWidth, (v) => {
                 this.config.penWidth = v;
                 this.settings.penWidth = v;
-            }, 1, 24));
+            }, 1, 100));
+        row(this.t("settingPenWidthMax"), this.t("settingPenWidthMaxHint"),
+            mkNumber(() => this.settings.penWidthMax, (v) => {
+                this.settings.penWidthMax = v;
+                this.overlaySettings.penWidthMax = v;
+                if (this.config.penWidth > v) {
+                    this.config.penWidth = v;
+                    this.persistSession();
+                }
+            }, 5, 100));
         row(this.t("settingHlColor"), undefined,
             mkColor(() => this.config.hlColor, (v) => {
                 this.config.hlColor = v;
