@@ -44,11 +44,18 @@
 
 ### 在 iPad 上使用
 
-三种方式任选：
+**方式一：插件市场安装（推荐）**。本插件已提交至思源官方集市收录（[PR](https://github.com/siyuan-note/bazaar/pulls?q=is%3Apr+ BUGdefender404%2Fpencil-annotation)）：PR 合并后，在 iPad 端思源「设置 → 集市 → 插件」中搜索 **Pencil 手写批注** 或 **pencil-annotation** 直接安装即可，之后版本更新也会出现在集市中。
 
-1. **跟随思源同步**：先在桌面端完成安装并启用插件，`data/plugins` 会随数据同步带到 iPad 端工作空间（参考项目即采用此方式分发；若你的同步配置未包含插件目录，请用方式 2/3）。
-2. **浏览器访问**（推荐用于快速体验/测试）：iPad Safari 打开桌面端思源的局域网地址（如 `http://192.168.x.x:6806`），插件即可使用。
-3. **上架插件市场**：`npm run pack` 生成 `package.zip`，按官方流程发布到集市后，iPad 端可直接在集市安装（发布前记得把 `plugin.json` 里的 `name` 改成你的 GitHub 仓库名并补全 `author`/`url`）。
+**方式二：浏览器访问（临时/测试）**。iPad Safari 打开桌面端思源的局域网地址（如 `http://192.168.x.x:6806`），插件在移动浏览器前端同样可用。
+
+> iOS 端工作空间在应用沙箱内，无法像桌面端那样直接把文件拷进 `data/plugins`；除市场安装外，移动浏览器访问是最轻量的验证方式。
+
+## 发布流程（维护者）
+
+1. 更新 `plugin.json` 的 `version` 与 `CHANGELOG.md`；
+2. `npm run pack` 生成 `package.zip`；
+3. 在 GitHub 创建同名 tag 的 Release（如 `v0.1.0`）并附上 `package.zip`：`gh release create v0.1.0 package.zip`；
+4. 首次上架：向 [siyuan-note/bazaar](https://github.com/siyuan-note/bazaar) 的 `plugins.txt` 添加一行 `BUGdefender404/pencil-annotation` 并提 PR；后续新版本只需发 Release，集市会自动拉取。
 
 ## 使用
 

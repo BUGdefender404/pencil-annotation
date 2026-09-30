@@ -42,11 +42,18 @@ This is the plugin-private petal directory, which is part of SiYuan's encrypted 
 
 ### On the iPad
 
-Any of these works:
+**Marketplace (recommended)**. The plugin has been submitted to the official SiYuan bazaar ([PR](https://github.com/siyuan-note/bazaar/pulls?q=is%3Apr+BUGdefender404%2Fpencil-annotation)). Once merged, open SiYuan on the iPad → Settings → Marketplace → Plugins, search for **Pencil Annotation** and install; future updates ship through the marketplace too.
 
-1. **Via SiYuan sync**: install and enable the plugin on desktop first; `data/plugins` then reaches the iPad workspace through data sync.
-2. **Browser** (quick test): open the desktop instance's LAN address (e.g. `http://192.168.x.x:6806`) in iPad Safari — the plugin works in the mobile browser frontend too.
-3. **Marketplace**: `npm run pack` produces `package.zip`; publish via the official bazaar flow, then install from the marketplace on the iPad directly (rename `plugin.json`'s `name` to your GitHub repo name and fill in `author`/`url` before publishing).
+**Browser (quick test)**. Open the desktop instance's LAN address (e.g. `http://192.168.x.x:6806`) in iPad Safari — the plugin works in the mobile browser frontend as well.
+
+> The iOS workspace lives inside the app sandbox, so files cannot be copied into `data/plugins` directly like on desktop; apart from the marketplace, mobile-browser access is the lightest way to try it.
+
+## Release process (maintainer)
+
+1. bump `version` in `plugin.json` and update `CHANGELOG.md`;
+2. `npm run pack` → `package.zip`;
+3. create a GitHub Release with a tag matching the version and attach the zip: `gh release create v0.1.0 package.zip`;
+4. first listing: add a line `BUGdefender404/pencil-annotation` to `plugins.txt` in [siyuan-note/bazaar](https://github.com/siyuan-note/bazaar) and open a PR; later versions only need a new Release — the bazaar picks it up automatically.
 
 ## Development
 
