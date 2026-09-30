@@ -72,6 +72,9 @@ export interface Viewport {
     height: number;
 }
 
+/** per-stroke render offset (block-anchor delta in doc coords) */
+export type OffsetFn = (stroke: Stroke) => {dx: number; dy: number};
+
 /**
  * Paints strokes onto a 2d context. The caller has already applied the
  * device-pixel-ratio transform; coordinates passed in are document coords
@@ -83,6 +86,7 @@ export const paintStrokes = (
     renderer: StrokeRenderer,
     viewport: Viewport,
     skip?: (stroke: Stroke) => boolean,
+    offsets?: OffsetFn,
 ) => {
     ctx.save();
     ctx.translate(-viewport.originX, -viewport.originY);
@@ -96,11 +100,18 @@ export const paintStrokes = (
     // array but render into separate canvases (see overlay)
     for (const stroke of strokes) {
         if (skip && skip(stroke)) continue;
+        const off = offsets ? offsets(stroke) : {dx: 0, dy: 0};
         const {path, bbox} = renderer.getPath(stroke);
-        if (!bboxesIntersect(bbox, view)) continue;
+        if (!bboxesIntersect(
+            {minX: bbox.minX + off.dx, minY: bbox.minY + off.dy, maxX: bbox.maxX + off.dx, maxY: bbox.maxY + off.dy},
+            view,
+        )) continue;
+        ctx.save();
+        ctx.translate(off.dx, off.dy);
         ctx.globalAlpha = stroke.opacity;
         ctx.fillStyle = stroke.color;
         ctx.fill(path);
+        ctx.restore();
     }
     ctx.restore();
 };
@@ -110,9 +121,11 @@ export const paintOne = (
     stroke: Stroke,
     renderer: StrokeRenderer,
     viewport: Viewport,
+    offset?: {dx: number; dy: number},
 ) => {
     ctx.save();
     ctx.translate(-viewport.originX, -viewport.originY);
+    if (offset) ctx.translate(offset.dx, offset.dy);
     const {path} = renderer.getPath(stroke, true);
     ctx.globalAlpha = stroke.opacity;
     ctx.fillStyle = stroke.color;

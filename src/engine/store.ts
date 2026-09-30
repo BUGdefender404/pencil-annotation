@@ -145,14 +145,15 @@ export class DocStore {
         return true;
     }
 
-    /** bbox of everything drawn (for export) */
-    contentBBox() {
+    /** bbox of everything drawn (for export); offsets = block-anchor deltas */
+    contentBBox(offsets?: (s: Stroke) => {dx: number; dy: number}) {
         if (this.strokes.length === 0) return null;
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const s of this.strokes) {
             const b = strokeBBox(s);
-            minX = Math.min(minX, b.minX); minY = Math.min(minY, b.minY);
-            maxX = Math.max(maxX, b.maxX); maxY = Math.max(maxY, b.maxY);
+            const o = offsets ? offsets(s) : {dx: 0, dy: 0};
+            minX = Math.min(minX, b.minX + o.dx); minY = Math.min(minY, b.minY + o.dy);
+            maxX = Math.max(maxX, b.maxX + o.dx); maxY = Math.max(maxY, b.maxY + o.dy);
         }
         return {minX, minY, maxX, maxY};
     }

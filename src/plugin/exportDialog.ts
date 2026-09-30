@@ -39,7 +39,7 @@ export function exportStrokesDialog(overlay: DocOverlay, t: I18nFn) {
         const buttons = el.querySelectorAll<HTMLButtonElement>(".pa-export__actions button");
         buttons.forEach((b) => (b.disabled = true));
         try {
-            const blob = await strokesToPngBlob(overlay.store, bg());
+            const blob = await strokesToPngBlob(overlay.store, bg(), overlay.strokeOffsets());
             const fileName = `pencil-${overlay.docId}-${Date.now()}.png`;
             const path = await uploadAssetPng(fileName, blob);
             if (insert) {

@@ -4,9 +4,9 @@ import {
     unionBBox,
     type BBox,
 } from "../engine/geometry";
-import {paintOne, paintStrokes, StrokeRenderer, type Viewport} from "../engine/renderer";
+import {paintOne, paintStrokes, StrokeRenderer, type OffsetFn, type Viewport} from "../engine/renderer";
 import {DocStore} from "../engine/store";
-import type {PencilPayload, Point, Stroke, ToolId} from "../engine/types";
+import type {PencilPayload, Point, Stroke, StrokeAnchor, ToolId} from "../engine/types";
 
 /** Minimal structural view of a SiYuan protyle — keeps the overlay testable. */
 export interface ProtyleLike {
@@ -76,6 +76,7 @@ export class DocOverlay {
     private drawing = false;
     private erasing = false;
     private curPoints: Point[] = [];
+    private curAnchor: StrokeAnchor | null = null;
     private curStart = {x: 0, y: 0, t: 0};
     private curMoved = 0;
     private eraseHitSomething = false;
@@ -212,16 +213,77 @@ export class DocOverlay {
         }
     }
 
-    private prepareCtx(ctx: CanvasRenderingContext2D, vp: Viewport, clip: BBox | null) {
+    private prepareCtx(ctx: CanvasRenderingContext2D, vp: Viewport, clip: BBox | null, clear = true) {
         const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, vp.width, vp.height);
+        if (clear) ctx.clearRect(0, 0, vp.width, vp.height);
         if (clip) {
             ctx.beginPath();
             ctx.rect(clip.minX - vp.originX, clip.minY - vp.originY,
                 clip.maxX - clip.minX, clip.maxY - clip.minY);
             ctx.clip();
         }
+    }
+
+    // ------------------------------------------------------- block anchoring
+
+    /** document-space origin of a block element */
+    private blockOrigin(el: HTMLElement): {x: number; y: number} | null {
+        const w = this.wysiwygEl;
+        if (!w) return null;
+        const wr = w.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        return {x: r.left - wr.left, y: r.top - wr.top};
+    }
+
+    /** find the deepest text block under a screen point, for stroke anchoring */
+    private captureAnchor(clientX: number, clientY: number): StrokeAnchor | null {
+        const w = this.wysiwygEl;
+        if (!w || typeof document.elementsFromPoint !== "function") return null;
+        for (const el of document.elementsFromPoint(clientX, clientY)) {
+            const id = (el as HTMLElement).dataset?.nodeId;
+            if (id && el !== w && w.contains(el)) {
+                const o = this.blockOrigin(el as HTMLElement);
+                if (o) return {blockId: id, ox: Math.round(o.x * 100) / 100, oy: Math.round(o.y * 100) / 100};
+            }
+        }
+        return null;
+    }
+
+    private blockOffsetCache = new Map<string, {dx: number; dy: number}>();
+
+    /**
+     * Per-stroke render offset: how far the stroke's anchor block has moved
+     * since the stroke was drawn. Strokes without an anchor never move.
+     */
+    private buildOffsets(): OffsetFn {
+        this.blockOffsetCache.clear();
+        const w = this.wysiwygEl;
+        const zero = {dx: 0, dy: 0};
+        if (!w) return () => zero;
+        const wr = w.getBoundingClientRect();
+        return (s: Stroke) => {
+            if (!s.anchor) return zero;
+            let d = this.blockOffsetCache.get(s.anchor.blockId);
+            if (!d) {
+                d = {dx: 0, dy: 0};
+                const el = w.querySelector<HTMLElement>(`[data-node-id="${s.anchor.blockId}"]`);
+                if (el) {
+                    const r = el.getBoundingClientRect();
+                    d = {
+                        dx: Math.round((r.left - wr.left - s.anchor.ox) * 100) / 100,
+                        dy: Math.round((r.top - wr.top - s.anchor.oy) * 100) / 100,
+                    };
+                }
+                this.blockOffsetCache.set(s.anchor.blockId, d);
+            }
+            return d;
+        };
+    }
+
+    /** public accessor for export and other consumers */
+    strokeOffsets(): OffsetFn {
+        return this.buildOffsets();
     }
 
     // -------------------------------------------------------------- painting
@@ -238,21 +300,25 @@ export class DocOverlay {
     redrawAll() {
         const vp = this.viewport();
         const clip = this.contentClip(vp);
+        const offsets = this.buildOffsets();
         const inkCtx = this.inkCanvas.getContext("2d");
         const hlCtx = this.hlCanvas.getContext("2d");
         if (inkCtx) {
             this.prepareCtx(inkCtx, vp, clip);
-            paintStrokes(inkCtx, this.store.strokes, this.renderer, vp, (s) => s.tool !== "pen");
+            paintStrokes(inkCtx, this.store.strokes, this.renderer, vp,
+                (s) => s.tool !== "pen", offsets);
         }
         if (hlCtx) {
             this.prepareCtx(hlCtx, vp, clip);
-            paintStrokes(hlCtx, this.store.strokes, this.renderer, vp, (s) => s.tool !== "highlighter");
+            paintStrokes(hlCtx, this.store.strokes, this.renderer, vp,
+                (s) => s.tool !== "highlighter", offsets);
         }
-        this.redrawLive();
+        this.redrawLive(offsets);
     }
 
     /** live layer: current stroke / eraser cursor / selection box */
-    private redrawLive() {
+    private redrawLive(offsets?: OffsetFn) {
+        const offsetsFn = offsets || this.buildOffsets();
         const vp = this.viewport();
         const clip = this.contentClip(vp);
         const ctx = this.liveCanvas.getContext("2d");
@@ -268,7 +334,8 @@ export class DocOverlay {
                 id: "live", tool, color: cfg.color, width: cfg.width,
                 opacity: cfg.opacity, simulate: this.activePointerType !== "pen",
                 points: this.curPoints, createdAt: 0,
-            }, this.renderer, vp);
+                ...(this.curAnchor ? {anchor: this.curAnchor} : {}),
+            }, this.renderer, vp, this.liveOffset());
         } else if (this.erasing && this.deps.settings.showEraserCursor && this.curPoints.length > 0) {
             const last = this.curPoints[this.curPoints.length - 1];
             ctx.save();
@@ -282,7 +349,11 @@ export class DocOverlay {
             ctx.stroke();
             ctx.restore();
         } else if (this.selected.length > 0) {
-            const boxes = this.selected.map((s) => this.renderer.getPath(s).bbox);
+            const boxes = this.selected.map((s) => {
+                const b = this.renderer.getPath(s).bbox;
+                const o = offsetsFn(s);
+                return {minX: b.minX + o.dx, minY: b.minY + o.dy, maxX: b.maxX + o.dx, maxY: b.maxY + o.dy};
+            });
             const box = unionBBox(boxes);
             if (box) {
                 ctx.save();
@@ -296,14 +367,16 @@ export class DocOverlay {
         }
     }
 
+    /** incremental commit: paints the new stroke WITHOUT clearing the layer */
     private paintCommitted(stroke: Stroke) {
         const vp = this.viewport();
         const clip = this.contentClip(vp);
         const target = stroke.tool === "pen" ? this.inkCanvas : this.hlCanvas;
         const ctx = target.getContext("2d");
         if (!ctx) return;
-        this.prepareCtx(ctx, vp, clip);
-        paintOne(ctx, stroke, this.renderer, vp);
+        this.prepareCtx(ctx, vp, clip, false);
+        const offsets = this.buildOffsets();
+        paintOne(ctx, stroke, this.renderer, vp, offsets(stroke));
     }
 
     // ------------------------------------------------------------ data load
@@ -460,8 +533,12 @@ export class DocOverlay {
             this.curPoints = [pt];
             this.eraseSegment(pt.x, pt.y, pt.x, pt.y);
         } else if (tool === "select") {
-            const hit = this.store.strokes.find((s) =>
-                pointHitsStroke(s, pt.x, pt.y, SELECT_THRESHOLD));
+            this.curAnchor = null;
+            const offsets = this.buildOffsets();
+            const hit = this.store.strokes.find((s) => {
+                const o = offsets(s);
+                return pointHitsStroke(s, pt.x - o.dx, pt.y - o.dy, SELECT_THRESHOLD);
+            });
             this.selected = hit ? [hit] : [];
             if (hit) {
                 this.selDrag = {lastX: pt.x, lastY: pt.y, totalDx: 0, totalDy: 0};
@@ -470,6 +547,7 @@ export class DocOverlay {
             this.deps.onStateChange();
         } else {
             this.drawing = true;
+            this.curAnchor = this.captureAnchor(e.clientX, e.clientY);
             this.curPoints = [pt];
             this.liveCanvas.style.mixBlendMode =
                 tool === "highlighter" ? "multiply" : "normal";
@@ -538,6 +616,7 @@ export class DocOverlay {
             if (this.eraseHitSomething) this.changed();
         } else if (this.selDrag) {
             this.store.commitMove(this.selected, this.selDrag.totalDx, this.selDrag.totalDy);
+            this.reanchorStrokes(this.selected);
             this.selDrag = null;
             this.changed();
         }
@@ -558,6 +637,7 @@ export class DocOverlay {
         this.erasing = false;
         this.selDrag = null;
         this.curPoints = [];
+        this.curAnchor = null;
     }
 
     private cancelActiveInput() {
@@ -569,6 +649,20 @@ export class DocOverlay {
         this.activePointerId = null;
         this.drawing = false;
         this.erasing = false;
+        this.curAnchor = null;
+    }
+
+    /** after a drag, re-anchor moved strokes to the block under their new position */
+    private reanchorStrokes(strokes: Stroke[]) {
+        const w = this.wysiwygEl;
+        if (!w || strokes.length === 0) return;
+        const wr = w.getBoundingClientRect();
+        for (const s of strokes) {
+            const p0 = s.points[0];
+            if (!p0) continue;
+            const anchor = this.captureAnchor(wr.left + p0.x, wr.top + p0.y);
+            if (anchor) s.anchor = anchor;
+        }
     }
 
     private finishStroke(pt: Point) {
@@ -605,6 +699,21 @@ export class DocOverlay {
         this.commitStroke(points);
     }
 
+    /** current anchor delta for the in-progress stroke */
+    private liveOffset(): {dx: number; dy: number} {
+        if (!this.curAnchor) return {dx: 0, dy: 0};
+        const w = this.wysiwygEl;
+        if (!w) return {dx: 0, dy: 0};
+        const el = w.querySelector<HTMLElement>(`[data-node-id="${this.curAnchor.blockId}"]`);
+        if (!el) return {dx: 0, dy: 0};
+        const wr = w.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        return {
+            dx: Math.round((r.left - wr.left - this.curAnchor.ox) * 100) / 100,
+            dy: Math.round((r.top - wr.top - this.curAnchor.oy) * 100) / 100,
+        };
+    }
+
     private commitStroke(points: Point[]) {
         if (points.length === 0) return;
         const cfg = this.deps.config;
@@ -612,16 +721,22 @@ export class DocOverlay {
         const stroke = tool === "pen"
             ? {color: cfg.penColor, width: cfg.penWidth, opacity: 1}
             : {color: cfg.hlColor, width: cfg.hlWidth, opacity: 0.45};
-        this.store.addStroke(tool, {...stroke, simulate: this.activePointerType !== "pen"}, points);
+        const committed = this.store.addStroke(tool, {...stroke, simulate: this.activePointerType !== "pen"}, points);
+        if (this.curAnchor) committed.anchor = this.curAnchor;
         this.pendingDotPoints = null;
         this.redrawLive();
-        this.paintCommitted(this.store.strokes[this.store.strokes.length - 1]);
+        this.paintCommitted(committed);
         this.changed();
     }
 
     private eraseSegment(x1: number, y1: number, x2: number, y2: number) {
         const r = this.deps.settings.eraserRadius;
-        const removed = this.store.eraseWhere((s) => segmentHitsStroke(s, x1, y1, x2, y2, r));
+        const offsets = this.buildOffsets();
+        const removed = this.store.eraseWhere((s) => {
+            const o = offsets(s);
+            // shift the test segment into the stroke's creation-space
+            return segmentHitsStroke(s, x1 - o.dx, y1 - o.dy, x2 - o.dx, y2 - o.dy, r);
+        });
         if (removed.length > 0) {
             this.eraseHitSomething = true;
             for (const s of removed) this.renderer.forget(s.id);

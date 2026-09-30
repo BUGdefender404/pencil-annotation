@@ -1,12 +1,17 @@
-import {paintStrokes, StrokeRenderer} from "../engine/renderer";
+import {paintStrokes, StrokeRenderer, type OffsetFn} from "../engine/renderer";
 import type {DocStore} from "../engine/store";
 
 /**
  * Composites all strokes of a document into a single PNG blob.
  * Highlighter is blended (multiply on white bg) so it looks like a real marker.
+ * `offsets` applies block-anchor deltas so strokes land where they render.
  */
-export function strokesToPngBlob(store: DocStore, bg: "white" | "transparent"): Promise<Blob> {
-    const bbox = store.contentBBox();
+export function strokesToPngBlob(
+    store: DocStore,
+    bg: "white" | "transparent",
+    offsets?: OffsetFn,
+): Promise<Blob> {
+    const bbox = store.contentBBox(offsets);
     if (!bbox) return Promise.reject(new Error("empty"));
     const pad = 12;
     const scale = 2;
@@ -34,10 +39,10 @@ export function strokesToPngBlob(store: DocStore, bg: "white" | "transparent"): 
     const renderer = new StrokeRenderer();
     // highlighter pass (multiply against white looks like a real marker)
     ctx.globalCompositeOperation = bg === "white" ? "multiply" : "source-over";
-    paintStrokes(ctx, store.strokes, renderer, viewport, (s) => s.tool !== "highlighter");
+    paintStrokes(ctx, store.strokes, renderer, viewport, (s) => s.tool !== "highlighter", offsets);
     // ink pass
     ctx.globalCompositeOperation = "source-over";
-    paintStrokes(ctx, store.strokes, renderer, viewport, (s) => s.tool !== "pen");
+    paintStrokes(ctx, store.strokes, renderer, viewport, (s) => s.tool !== "pen", offsets);
 
     return new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(

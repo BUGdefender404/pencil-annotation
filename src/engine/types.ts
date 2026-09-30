@@ -12,6 +12,18 @@ export interface Point {
 
 export type StrokeTool = "pen" | "highlighter";
 
+/**
+ * Text-block anchoring: when a stroke starts on a SiYuan block
+ * (an element with data-node-id), we record that block plus the block's
+ * document-space origin at draw time. On reflow the block moves and the
+ * stroke follows by the same delta.
+ */
+export interface StrokeAnchor {
+    blockId: string;
+    ox: number;
+    oy: number;
+}
+
 export interface Stroke {
     id: string;
     tool: StrokeTool;
@@ -25,6 +37,7 @@ export interface Stroke {
     simulate: boolean;
     points: Point[];
     createdAt: number;
+    anchor?: StrokeAnchor;
 }
 
 export type ToolConfig = Pick<Stroke, "tool" | "color" | "width" | "opacity">;
@@ -45,6 +58,8 @@ export interface SerializedStroke {
     /** flat [x, y, pressure, ...] */
     p: number[];
     a: number; // createdAt
+    /** optional block anchor: [blockId, originX, originY] */
+    b?: [string, number, number];
 }
 
 export interface PencilPayload {
@@ -67,6 +82,15 @@ export const serializeStroke = (s: Stroke): SerializedStroke => ({
         Math.round(pt.p * 1000) / 1000,
     ]),
     a: s.createdAt,
+    ...(s.anchor
+        ? {
+            b: [
+                s.anchor.blockId,
+                Math.round(s.anchor.ox * 100) / 100,
+                Math.round(s.anchor.oy * 100) / 100,
+            ] as [string, number, number],
+        }
+        : {}),
 });
 
 export const deserializeStroke = (d: SerializedStroke): Stroke => {
@@ -83,5 +107,8 @@ export const deserializeStroke = (d: SerializedStroke): Stroke => {
         simulate: d.s === 1,
         points,
         createdAt: d.a,
+        ...(Array.isArray(d.b) && d.b.length === 3
+            ? {anchor: {blockId: d.b[0], ox: d.b[1], oy: d.b[2]}}
+            : {}),
     };
 };
