@@ -216,6 +216,35 @@
     gap: 2px;
 }
 
+/* ---------- docked (vertical) toolbar for left/right edges ---------- */
+.pa-toolbar--vertical {
+    flex-direction: column;
+    padding: 6px 5px;
+}
+
+.pa-toolbar--vertical .pa-toolbar__group,
+.pa-toolbar--vertical .pa-toolbar__selection {
+    flex-direction: column;
+}
+
+.pa-toolbar--vertical .pa-toolbar__sep {
+    width: 24px;
+    height: 1px;
+    margin: 4px 0;
+}
+
+.pa-toolbar--vertical .pa-toolbar__options {
+    flex-direction: column;
+    max-width: none;
+    max-height: 38vh;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.pa-toolbar--vertical .pa-toolbar__options span {
+    writing-mode: initial;
+}
+
 /* ---------- topbar icon ---------- */
 .pa-topbar-icon svg {
     width: 16px;

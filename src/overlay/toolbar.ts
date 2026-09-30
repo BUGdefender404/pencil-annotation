@@ -32,7 +32,23 @@ export interface PaletteDeps {
 }
 
 const POS_KEY = "pencil-annotation.toolbar-pos";
+const DOCK_KEY = "pencil-annotation.toolbar-dock";
 const HANDLE_POS_KEY = "pencil-annotation.handle-pos";
+
+type Dock = "free" | "top" | "bottom" | "left" | "right";
+const DOCK_SNAP = 34;   // px from an edge that triggers docking
+const DOCK_MARGIN = 4;  // gap between a docked toolbar and the screen edge
+
+const loadDock = (): Dock => {
+    const v = localStorage.getItem(DOCK_KEY);
+    return v === "top" || v === "bottom" || v === "left" || v === "right" ? v : "free";
+};
+
+const saveDock = (dock: Dock) => {
+    try {
+        localStorage.setItem(DOCK_KEY, dock);
+    } catch { /* ignore */ }
+};
 
 const loadPos = (key: string): { x: number; y: number } | null => {
     try {
@@ -57,6 +73,7 @@ export class Palette {
     private readonly deps: PaletteDeps;
     private state: PaletteState = {mode: false, canUndo: false, canRedo: false, hasSelection: false};
     private suppressClick = false;
+    private dock: Dock = loadDock();
 
     constructor(deps: PaletteDeps) {
         this.deps = deps;
@@ -84,12 +101,21 @@ export class Palette {
     // -------------------------------------------------------------- layout
 
     private restorePositions() {
+        this.applyDockClass();
         const pos = loadPos(POS_KEY);
         if (pos) this.place(this.toolbar, pos);
         else this.defaultToolbarPos();
+        this.snapToDock();
         const hpos = loadPos(HANDLE_POS_KEY);
         if (hpos) this.place(this.handle, hpos);
         else this.defaultHandlePos();
+    }
+
+    private applyDockClass() {
+        this.toolbar.classList.toggle(
+            "pa-toolbar--vertical",
+            this.dock === "left" || this.dock === "right",
+        );
     }
 
     private defaultToolbarPos() {
@@ -112,6 +138,42 @@ export class Palette {
         el.style.bottom = "auto";
     }
 
+    /** clamps a docked toolbar flush against its edge, sliding along it */
+    private snapToDock() {
+        if (this.dock === "free") return;
+        const el = this.toolbar;
+        this.applyDockClass();
+        const w = el.offsetWidth || 60;
+        const h = el.offsetHeight || 46;
+        const cur = {x: parseFloat(el.style.left || "0"), y: parseFloat(el.style.top || "0")};
+        let x = cur.x, y = cur.y;
+        if (this.dock === "left") x = DOCK_MARGIN;
+        else if (this.dock === "right") x = window.innerWidth - w - DOCK_MARGIN;
+        else if (this.dock === "top") y = DOCK_MARGIN;
+        else if (this.dock === "bottom") y = window.innerHeight - h - DOCK_MARGIN;
+        this.place(el, {x, y});
+    }
+
+    /** live edge-snapping while the toolbar is dragged (edges detected by pointer) */
+    private applyDockDrag(x: number, y: number, px: number, py: number) {
+        const el = this.toolbar;
+        let dock: Dock = "free";
+        if (px < DOCK_SNAP) dock = "left";
+        else if (px > window.innerWidth - DOCK_SNAP) dock = "right";
+        else if (py < DOCK_SNAP) dock = "top";
+        else if (py > window.innerHeight - DOCK_SNAP) dock = "bottom";
+        this.dock = dock;
+        el.classList.toggle("pa-toolbar--vertical", dock === "left" || dock === "right");
+        const w2 = el.offsetWidth || 60;
+        const h2 = el.offsetHeight || 46;
+        let lx = x, ly = y;
+        if (dock === "left") lx = DOCK_MARGIN;
+        else if (dock === "right") lx = window.innerWidth - w2 - DOCK_MARGIN;
+        else if (dock === "top") ly = DOCK_MARGIN;
+        else if (dock === "bottom") ly = window.innerHeight - h2 - DOCK_MARGIN;
+        this.place(el, {x: lx, y: ly});
+    }
+
     private placeDefaultIfFloating() {
         if (!loadPos(POS_KEY)) this.defaultToolbarPos();
     }
@@ -130,14 +192,27 @@ export class Palette {
                 let moved = false;
                 const move = (ev: PointerEvent) => {
                     moved = true;
-                    this.place(el, {x: ev.clientX - offX, y: ev.clientY - offY});
+                    if (el === this.toolbar) {
+                        this.applyDockDrag(ev.clientX - offX, ev.clientY - offY, ev.clientX, ev.clientY);
+                    } else {
+                        this.place(el, {x: ev.clientX - offX, y: ev.clientY - offY});
+                    }
                 };
                 const up = (ev: PointerEvent) => {
                     window.removeEventListener("pointermove", move);
                     window.removeEventListener("pointerup", up);
                     if (moved) {
-                        savePos(key, {x: ev.clientX - offX, y: ev.clientY - offY});
-                        if (el === this.handle) this.suppressClick = true; // drag, not a tap
+                        if (el === this.toolbar) {
+                            savePos(key, {
+                                x: parseFloat(el.style.left || "0"),
+                                y: parseFloat(el.style.top || "0"),
+                            });
+                            saveDock(this.dock);
+                            requestAnimationFrame(() => this.snapToDock());
+                        } else {
+                            savePos(key, {x: ev.clientX - offX, y: ev.clientY - offY});
+                            this.suppressClick = true; // drag, not a tap
+                        }
                     } else if (el === this.handle) {
                         // a plain tap on the handle toggles drawing mode
                         this.deps.onHandleActivate();
@@ -287,9 +362,11 @@ export class Palette {
         );
 
         // keep inside viewport after re-render (size may have changed)
+        this.applyDockClass();
         const x = parseFloat(this.toolbar.style.left || "0");
         const y = parseFloat(this.toolbar.style.top || "0");
         this.place(this.toolbar, {x, y});
+        this.snapToDock();
     }
 
     private sep(): HTMLDivElement {
@@ -305,7 +382,10 @@ export class Palette {
         this.toolbar.style.display = on ? "" : "none";
         this.handle.style.display = on ? "none" : "";
         this.handle.classList.toggle("pa-handle--on", on);
-        if (on) this.placeDefaultIfFloating();
+        if (on) {
+            if (this.dock === "free") this.placeDefaultIfFloating();
+            else this.snapToDock();
+        }
     }
 
     update(state: Partial<PaletteState>) {
@@ -325,9 +405,7 @@ export class Palette {
     }
 
     repositionForViewport() {
-        const x = parseFloat(this.toolbar.style.left || "0");
-        const y = parseFloat(this.toolbar.style.top || "0");
-        this.place(this.toolbar, {x, y});
+        this.snapToDock();
         const hx = parseFloat(this.handle.style.left || "0");
         const hy = parseFloat(this.handle.style.top || "0");
         this.place(this.handle, {x: hx, y: hy});
