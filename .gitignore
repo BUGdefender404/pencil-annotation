@@ -2,3 +2,5 @@ node_modules/
 build/
 *.zip
 .DS_Store
+dock-*.png
+real-app-test.png
