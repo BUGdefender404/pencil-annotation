@@ -27,6 +27,8 @@ export interface PaletteDeps {
     onColor: (color: string) => void;
     onWidth: (width: number) => void;
     onAction: (action: PaletteAction) => void;
+    /** tapping the floating handle toggles drawing mode */
+    onHandleActivate: () => void;
 }
 
 const POS_KEY = "pencil-annotation.toolbar-pos";
@@ -54,6 +56,7 @@ export class Palette {
 
     private readonly deps: PaletteDeps;
     private state: PaletteState = {mode: false, canUndo: false, canRedo: false, hasSelection: false};
+    private suppressClick = false;
 
     constructor(deps: PaletteDeps) {
         this.deps = deps;
@@ -72,9 +75,8 @@ export class Palette {
         this.restorePositions();
         this.bindDragging();
         this.handle.addEventListener("click", () => {
-            this.toolbar.style.display = "";
-            this.handle.style.display = "none";
-            this.placeDefaultIfFloating();
+            if (!this.suppressClick) this.deps.onHandleActivate();
+            this.suppressClick = false;
         });
         this.renderToolbar();
     }
@@ -135,11 +137,11 @@ export class Palette {
                     window.removeEventListener("pointerup", up);
                     if (moved) {
                         savePos(key, {x: ev.clientX - offX, y: ev.clientY - offY});
+                        if (el === this.handle) this.suppressClick = true; // drag, not a tap
                     } else if (el === this.handle) {
-                        // a plain tap on the handle expands the toolbar
-                        this.toolbar.style.display = "";
-                        this.handle.style.display = "none";
-                        this.placeDefaultIfFloating();
+                        // a plain tap on the handle toggles drawing mode
+                        this.deps.onHandleActivate();
+                        this.suppressClick = true;
                     }
                 };
                 window.addEventListener("pointermove", move);
@@ -320,16 +322,6 @@ export class Palette {
     /** force a full re-render (tool/color/width changes) */
     refresh() {
         this.renderToolbar();
-    }
-
-    collapse() {
-        this.toolbar.style.display = "none";
-        this.handle.style.display = "";
-        const x = parseFloat(this.toolbar.style.left || "0");
-        const y = parseFloat(this.toolbar.style.top || "0");
-        if (!loadPos(HANDLE_POS_KEY)) {
-            this.place(this.handle, {x: Math.min(x + 20, window.innerWidth - 60), y: y + 40});
-        }
     }
 
     repositionForViewport() {

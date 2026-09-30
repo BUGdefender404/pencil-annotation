@@ -3,8 +3,8 @@ import {
     getAllEditor,
     getFrontend,
     Plugin,
+    Setting,
     showMessage,
-    type Setting,
 } from "siyuan";
 import {DocOverlay, type OverlayConfig, type OverlaySettings, type ProtyleLike} from "./overlay/overlay";
 import {Palette, type PaletteAction} from "./overlay/toolbar";
@@ -74,6 +74,13 @@ export default class PencilAnnotationPlugin extends Plugin {
             hlWidth: session.hlWidth || this.settings.hlWidth,
         };
 
+        // core wiring first — the overlay must never depend on UI extras below
+        this.eventBus.on("loaded-protyle-static", ({detail}) => this.attachProtyle(detail.protyle));
+        this.eventBus.on("loaded-protyle-dynamic", ({detail}) => this.attachProtyle(detail.protyle));
+        this.eventBus.on("destroy-protyle", ({detail}) => this.detachProtyle(detail.protyle));
+        this.eventBus.on("switch-protyle", ({detail}) => this.setActiveProtyle(detail.protyle));
+        this.eventBus.on("click-editorcontent", ({detail}) => this.setActiveProtyle(detail.protyle));
+
         this.palette = new Palette({
             i18n: this.t,
             config: this.config,
@@ -97,6 +104,7 @@ export default class PencilAnnotationPlugin extends Plugin {
                 this.palette.refresh();
             },
             onAction: (action) => this.onPaletteAction(action),
+            onHandleActivate: () => this.toggleMode(),
         });
         this.palette.setMode(false); // shows the floating handle as entry point
 
@@ -116,11 +124,9 @@ export default class PencilAnnotationPlugin extends Plugin {
 
         this.buildSettingDialog();
 
-        this.eventBus.on("loaded-protyle-static", ({detail}) => this.attachProtyle(detail.protyle));
-        this.eventBus.on("loaded-protyle-dynamic", ({detail}) => this.attachProtyle(detail.protyle));
-        this.eventBus.on("destroy-protyle", ({detail}) => this.detachProtyle(detail.protyle));
-        this.eventBus.on("switch-protyle", ({detail}) => this.setActiveProtyle(detail.protyle));
-        this.eventBus.on("click-editorcontent", ({detail}) => this.setActiveProtyle(detail.protyle));
+        // when the plugin is enabled mid-session, editors are already open and
+        // no loaded-protyle event will fire — pick them up after onload settles
+        window.setTimeout(() => this.attachExisting(), 600);
 
         window.addEventListener("resize", this.onViewportResize);
         document.addEventListener("keydown", this.onKeyDown, true);
@@ -129,7 +135,11 @@ export default class PencilAnnotationPlugin extends Plugin {
     }
 
     onLayoutReady() {
-        // editors that were restored before the plugin finished loading
+        this.attachExisting();
+    }
+
+    /** attach overlays to every editor that is already open */
+    private attachExisting() {
         for (const editor of getAllEditor()) {
             this.attachProtyle(editor as unknown as ProtyleLike);
         }
@@ -264,7 +274,8 @@ export default class PencilAnnotationPlugin extends Plugin {
                 if (overlay) exportStrokesDialog(overlay, this.t);
                 break;
             case "collapse":
-                this.palette.collapse();
+                // collapsing the toolbar exits drawing mode (handle comes back)
+                this.toggleMode();
                 break;
             case "settings":
                 this.openSetting();
@@ -392,6 +403,11 @@ export default class PencilAnnotationPlugin extends Plugin {
     // -------------------------------------------------------------- settings
 
     private buildSettingDialog() {
+        this.setting = new Setting({
+            height: "44vh",
+            width: "600px",
+            confirmCallback: () => this.applyAndPersistSettings(),
+        });
         const s: Setting = this.setting;
         const row = (
             title: string,
