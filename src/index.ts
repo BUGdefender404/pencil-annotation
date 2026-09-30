@@ -97,11 +97,12 @@ export default class PencilAnnotationPlugin extends Plugin {
                 this.palette.refresh();
             },
             onWidth: (width) => {
+                // no palette.refresh() here: the slider updates itself in place,
+                // and a re-render mid-drag would tear the input from the pointer
                 if (this.config.tool === "highlighter") this.config.hlWidth = width;
                 else if (this.config.tool === "eraser") this.overlaySettings.eraserRadius = width;
                 else this.config.penWidth = width;
                 this.persistSession();
-                this.palette.refresh();
             },
             onAction: (action) => this.onPaletteAction(action),
             onHandleActivate: () => this.toggleMode(),

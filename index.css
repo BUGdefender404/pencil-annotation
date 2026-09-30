@@ -181,32 +181,70 @@
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
 }
 
+/* rheostat-style width slider (pen / highlighter / eraser) */
 .pa-width {
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    border: none;
-    padding: 0;
-    background: transparent;
     display: flex;
     align-items: center;
-    justify-content: center;
-    cursor: pointer;
+    gap: 7px;
+    padding: 0 6px;
     flex: none;
 }
 
-.pa-width:hover {
-    background: rgba(255, 255, 255, 0.1);
-}
-
-.pa-width i {
+.pa-width__dot {
     display: block;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.9);
+    flex: none;
 }
 
-.pa-width--active {
-    background: rgba(99, 102, 241, 0.55);
+.pa-width__slider {
+    position: relative;
+    width: 104px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    flex: none;
+}
+
+.pa-width input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 104px;
+    height: 22px;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.pa-width input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.28);
+}
+
+.pa-width input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: #6366f1;
+    border: 2px solid #fff;
+    box-sizing: border-box;
+}
+
+.pa-width__val {
+    font-size: 11px;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.65);
+    min-width: 18px;
+    text-align: left;
+    flex: none;
 }
 
 /* selection action buttons shown while a stroke is selected */
@@ -243,6 +281,26 @@
 
 .pa-toolbar--vertical .pa-toolbar__options span {
     writing-mode: initial;
+}
+
+/* vertical (docked left/right): rotate the slider to run along the edge */
+.pa-toolbar--vertical .pa-width {
+    flex-direction: column;
+    gap: 5px;
+    padding: 4px 0;
+}
+
+.pa-toolbar--vertical .pa-width__slider {
+    width: 22px;
+    height: 104px;
+}
+
+.pa-toolbar--vertical .pa-width input[type="range"] {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    /* min (thin) at the bottom, max (thick) at the top */
+    transform: translate(-50%, -50%) rotate(90deg);
 }
 
 /* ---------- topbar icon ---------- */

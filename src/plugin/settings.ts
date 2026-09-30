@@ -17,7 +17,7 @@ export const DEFAULT_SETTINGS: PencilSettings = {
     showEraserCursor: true,
     eraserRadius: 20,
     penColor: "#1e1e1e",
-    penWidth: 4,
+    penWidth: 5, // sits on the toolbar slider grid (min 5, step 5)
     hlColor: "#ffd400",
     hlWidth: 20,
 };

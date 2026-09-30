@@ -4,9 +4,16 @@ import {ICONS} from "./icons";
 
 export const PEN_COLORS = ["#1e1e1e", "#e03131", "#2f6fed", "#2f9e44", "#f76707", "#9c36b5"];
 export const HL_COLORS = ["#ffd400", "#ff922b", "#69db7c", "#4dabf7", "#f783ac"];
-export const PEN_WIDTHS = [2, 4, 7];
-export const HL_WIDTHS = [14, 20];
-export const ERASER_SIZES = [12, 20, 30];
+
+/** slider ranges for stroke width / eraser size — continuous adjustment with a coarse step */
+export const WIDTH_RANGE = {
+    pen: {min: 5, max: 50, step: 5},
+    highlighter: {min: 10, max: 60, step: 5},
+    eraser: {min: 10, max: 50, step: 5},
+} as const;
+
+const snapToRange = (v: number, r: { min: number; max: number; step: number }) =>
+    Math.min(r.max, Math.max(r.min, Math.round((v - r.min) / r.step) * r.step + r.min));
 
 export type PaletteAction =
     | "undo" | "redo" | "clear" | "export" | "collapse" | "settings"
@@ -183,7 +190,7 @@ export class Palette {
             const el = elRaw as HTMLElement;
             el.addEventListener("pointerdown", (e: PointerEvent) => {
                 const target = e.target as HTMLElement;
-                if (el === this.toolbar && target.closest("button")) return; // buttons stay clickable
+                if (el === this.toolbar && target.closest("button,input,.pa-width")) return; // controls stay interactive
                 e.preventDefault();
                 e.stopPropagation();
                 const rect = el.getBoundingClientRect();
@@ -240,6 +247,58 @@ export class Palette {
         return b;
     }
 
+    /** rheostat-style width slider; live value flows out through deps.onWidth */
+    private widthSlider(
+        kind: keyof typeof WIDTH_RANGE,
+        value: number,
+        dotColor: string,
+    ): HTMLDivElement {
+        const range = WIDTH_RANGE[kind];
+        const wrap = document.createElement("div");
+        wrap.className = "pa-width";
+
+        const dot = document.createElement("i");
+        dot.className = "pa-width__dot";
+        dot.style.background = dotColor;
+        const setDot = (v: number) => {
+            const d = Math.round(6 + ((v - range.min) / (range.max - range.min)) * 14);
+            dot.style.width = `${d}px`;
+            dot.style.height = `${d}px`;
+        };
+
+        const sliderBox = document.createElement("div");
+        sliderBox.className = "pa-width__slider";
+        const input = document.createElement("input");
+        input.type = "range";
+        input.min = String(range.min);
+        input.max = String(range.max);
+        input.step = String(range.step);
+        input.value = String(snapToRange(value, range));
+        sliderBox.appendChild(input);
+
+        const val = document.createElement("span");
+        val.className = "pa-width__val";
+        val.textContent = input.value;
+        const syncTitle = () => {
+            wrap.title = `${input.value}px`;
+        };
+        syncTitle();
+        setDot(Number(input.value));
+
+        input.addEventListener("input", () => {
+            const v = Number(input.value);
+            setDot(v);
+            val.textContent = input.value;
+            syncTitle();
+            this.deps.onWidth(v);
+        });
+        // dragging the thumb must not drag the toolbar itself
+        input.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+        wrap.append(dot, sliderBox, val);
+        return wrap;
+    }
+
     private renderToolbar() {
         const t = this.deps.i18n;
         const cfg = this.deps.config;
@@ -282,39 +341,11 @@ export class Palette {
                 });
                 options.appendChild(sw);
             }
-            const widths = tool === "pen" ? PEN_WIDTHS : HL_WIDTHS;
             const activeWidth = tool === "pen" ? cfg.penWidth : cfg.hlWidth;
-            for (const w of widths) {
-                const wb = document.createElement("button");
-                wb.className = `pa-width ${w === activeWidth ? "pa-width--active" : ""}`;
-                const dot = document.createElement("i");
-                const d = Math.min(20, 6 + w * 1.6);
-                dot.style.width = `${d}px`;
-                dot.style.height = `${d}px`;
-                wb.appendChild(dot);
-                wb.title = `${w}px`;
-                wb.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                    this.deps.onWidth(w);
-                });
-                options.appendChild(wb);
-            }
+            options.appendChild(this.widthSlider(tool, activeWidth, activeColor));
         } else if (tool === "eraser") {
-            for (const size of ERASER_SIZES) {
-                const wb = document.createElement("button");
-                wb.className = `pa-width ${size === this.deps.settings.eraserRadius ? "pa-width--active" : ""}`;
-                const dot = document.createElement("i");
-                const d = 8 + ERASER_SIZES.indexOf(size) * 5;
-                dot.style.width = `${d}px`;
-                dot.style.height = `${d}px`;
-                wb.appendChild(dot);
-                wb.title = `${size}px`;
-                wb.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                    this.deps.onWidth(size);
-                });
-                options.appendChild(wb);
-            }
+            options.appendChild(this.widthSlider(
+                "eraser", this.deps.settings.eraserRadius, "rgba(255,255,255,.9)"));
         } else if (tool === "select") {
             const hint = document.createElement("span");
             hint.style.cssText = "font-size:12px;color:rgba(255,255,255,.65);white-space:nowrap;";
