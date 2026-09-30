@@ -16,6 +16,7 @@ const copies = [
     "plugin.json",
     "index.css",
     "icon.png",
+    "preview.png",
     "i18n",
     "README.md",
     "README.zh_CN.md",
