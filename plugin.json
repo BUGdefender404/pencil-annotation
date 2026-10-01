@@ -1,0 +1,55 @@
+{
+  "name": "pencil-annotation",
+  "author": "Ray Zhang",
+  "url": "https://github.com/BUGdefender404/pencil-annotation",
+  "version": "0.2.4",
+  "minAppVersion": "3.1.0",
+  "kernels": [
+    "windows",
+    "linux",
+    "darwin",
+    "android",
+    "ios",
+    "harmony"
+  ],
+  "backends": [
+    "windows",
+    "linux",
+    "darwin",
+    "android",
+    "ios",
+    "harmony"
+  ],
+  "frontends": [
+    "desktop",
+    "desktop-window",
+    "mobile",
+    "browser-desktop",
+    "browser-mobile"
+  ],
+  "displayName": {
+    "default": "Pencil Annotation",
+    "zh-CN": "Pencil 手写批注"
+  },
+  "description": {
+    "default": "Handwrite on your documents with Apple Pencil or a stylus: pressure-sensitive pen, highlighter, eraser, selection, and sync-safe storage.",
+    "zh-CN": "用 Apple Pencil/触控笔在文档上手写批注：压感钢笔、荧光笔、橡皮擦、笔迹选择移动，笔迹随思源同步，不惧换机与重装。"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh-CN": "README.zh_CN.md"
+  },
+  "icon": "icon.png",
+  "preview": "preview.png",
+  "keywords": [
+    "pencil",
+    "draw",
+    "drawing",
+    "handwriting",
+    "annotation",
+    "手写",
+    "批注",
+    "绘图",
+    "apple pencil"
+  ]
+}
