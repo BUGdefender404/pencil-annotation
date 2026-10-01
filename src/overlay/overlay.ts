@@ -69,6 +69,8 @@ export class DocOverlay {
     private wysiwygEl: HTMLElement | null = null;
     private contentEl: HTMLElement | null = null;
     private resizeObs: ResizeObserver | null = null;
+    private mutationObs: MutationObserver | null = null;
+    private observedWysiwyg: HTMLElement | null = null;
     private scrollEl: HTMLElement | null = null;
     private redrawScheduled = false;
 
@@ -89,7 +91,9 @@ export class DocOverlay {
     // gestures: track active touch pointers for palm rejection only
     private touchPointers = new Set<number>();
     private pendingDotTimer: number | null = null;
-    private pendingDotPoints: Point[] | null = null;
+    /** dot held during double-tap detection, together with its anchor — finishPointer
+     *  clears curAnchor before the delayed commit runs, so it must travel along */
+    private pendingDot: {points: Point[]; anchor: StrokeAnchor | null} | null = null;
     private lastPenTap = {t: 0, x: 0, y: 0};
 
     private constructor(protyle: ProtyleLike, deps: OverlayDeps) {
@@ -136,6 +140,23 @@ export class DocOverlay {
             this.protyle.contentElement ||
             this.wysiwygEl?.parentElement ||
             null;
+        this.syncContentWatchers();
+    }
+
+    /** keep the resize/mutation observers pointed at the live wysiwyg element —
+     *  SiYuan may replace the node when it re-renders the document */
+    private syncContentWatchers() {
+        const w = this.wysiwygEl;
+        if (!w || this.observedWysiwyg === w) return;
+        this.observedWysiwyg = w;
+        try {
+            this.resizeObs?.observe(w);
+            if (!this.mutationObs) {
+                this.mutationObs = new MutationObserver(this.scheduleRedraw);
+            }
+            this.mutationObs.disconnect();
+            this.mutationObs.observe(w, {childList: true, subtree: true});
+        } catch { /* element detached mid-observation */ }
     }
 
     private bindEvents() {
@@ -146,6 +167,7 @@ export class DocOverlay {
         this.capture.addEventListener("contextmenu", (e) => {
             if (this.mode) e.preventDefault();
         });
+        document.addEventListener("visibilitychange", this.onVisible);
     }
 
     private watchScroll() {
@@ -159,6 +181,8 @@ export class DocOverlay {
         });
         this.resizeObs.observe(this.root);
         if (this.contentEl) this.resizeObs.observe(this.contentEl);
+        // wysiwyg observation (size + DOM mutations) is kept in sync with the
+        // live element by syncContentWatchers(), called from resolveRefs()
     }
 
     // ------------------------------------------------------------- geometry
@@ -290,13 +314,26 @@ export class DocOverlay {
 
     // -------------------------------------------------------------- painting
 
+    /** repaint once the window becomes visible again (canvas may have been
+     *  cleared by a resize that happened while rAF was frozen) */
+    private onVisible = () => {
+        if (document.visibilityState === "visible") this.scheduleRedraw();
+    };
+
     private scheduleRedraw = () => {
         if (this.redrawScheduled) return;
         this.redrawScheduled = true;
-        requestAnimationFrame(() => {
+        let done = false;
+        const run = () => {
+            if (done) return;
+            done = true;
             this.redrawScheduled = false;
             this.redrawAll();
-        });
+        };
+        requestAnimationFrame(run);
+        // rAF never fires while the window is hidden/occluded (SiYuan keeps
+        // running in the tray); the timeout guarantees the repaint happens
+        window.setTimeout(run, 150);
     };
 
     redrawAll() {
@@ -388,7 +425,12 @@ export class DocOverlay {
             const payload = await this.deps.loadPayload(this.docId);
             if (payload && Array.isArray(payload.strokes)) {
                 this.store.adoptPayload(payload);
+                if (this.anchorLegacyStrokes()) this.changed();
                 this.scheduleRedraw();
+                // the protyle may still be rendering blocks when this first
+                // paint lands; repaint a couple more times as the layout settles
+                window.setTimeout(() => this.scheduleRedraw(), 250);
+                window.setTimeout(() => this.scheduleRedraw(), 900);
                 this.deps.onStateChange();
             }
         } catch (e) {
@@ -400,8 +442,55 @@ export class DocOverlay {
     applyRemote(payload: PencilPayload): boolean {
         if (payload.docId && payload.docId !== this.docId) return false;
         const changed = this.store.mergeRemote(payload);
-        if (changed) this.scheduleRedraw();
+        if (changed) {
+            this.anchorLegacyStrokes();
+            this.scheduleRedraw();
+        }
         return changed;
+    }
+
+    /**
+     * Strokes drawn before block anchoring existed have no anchor and would sit
+     * still through reflow. Anchor each of them to the block under its first
+     * point (offset is captured at the current position, so nothing moves now —
+     * the stroke just starts following that block from here on).
+     * @returns true if any stroke gained an anchor
+     */
+    private anchorLegacyStrokes(): boolean {
+        const w = this.wysiwygEl;
+        if (!w) return false;
+        const blocks = [...w.querySelectorAll<HTMLElement>("[data-node-id]")];
+        if (blocks.length === 0) return false;
+        const wr = w.getBoundingClientRect();
+        let any = false;
+        for (const s of this.store.strokes) {
+            if (s.anchor) continue;
+            const p0 = s.points[0];
+            if (!p0) continue;
+            const sx = wr.left + p0.x;
+            const sy = wr.top + p0.y;
+            let hit: HTMLElement | null = null;
+            for (const el of blocks) {
+                const r = el.getBoundingClientRect();
+                const pad = hit ? 0 : 24; // exact containment first, then a small margin
+                if (sx >= r.left - pad && sx <= r.right + pad && sy >= r.top - pad && sy <= r.bottom + pad) {
+                    hit = el; // pre-order: later matches are deeper blocks
+                }
+            }
+            if (hit) {
+                const o = this.blockOrigin(hit);
+                if (o) {
+                    s.anchor = {
+                        blockId: hit.dataset.nodeId!,
+                        ox: Math.round(o.x * 100) / 100,
+                        oy: Math.round(o.y * 100) / 100,
+                    };
+                    any = true;
+                }
+            }
+        }
+        if (any) this.store.dirty = true; // so the retro-anchored payload gets saved
+        return any;
     }
 
     // ---------------------------------------------------------------- mode
@@ -420,6 +509,14 @@ export class DocOverlay {
 
     destroy() {
         this.cancelActiveInput();
+        if (this.pendingDotTimer !== null) {
+            window.clearTimeout(this.pendingDotTimer);
+            this.pendingDotTimer = null;
+            this.pendingDot = null;
+        }
+        document.removeEventListener("visibilitychange", this.onVisible);
+        this.mutationObs?.disconnect();
+        this.mutationObs = null;
         this.resizeObs?.disconnect();
         this.resizeObs = null;
         if (this.scrollEl) {
@@ -678,19 +775,19 @@ export class DocOverlay {
                 // second tap of a pencil double-tap → tool toggle, no dots
                 window.clearTimeout(this.pendingDotTimer);
                 this.pendingDotTimer = null;
-                this.pendingDotPoints = null;
+                this.pendingDot = null;
                 this.lastPenTap = {t: 0, x: 0, y: 0};
                 this.redrawLive();
                 this.deps.onDoubleTapToggle();
                 return;
             }
             // hold the dot briefly in case a double-tap follows
-            this.pendingDotPoints = points;
+            this.pendingDot = {points, anchor: this.curAnchor};
             this.pendingDotTimer = window.setTimeout(() => {
                 this.pendingDotTimer = null;
-                if (this.pendingDotPoints) {
-                    this.commitStroke(this.pendingDotPoints);
-                    this.pendingDotPoints = null;
+                if (this.pendingDot) {
+                    this.commitStroke(this.pendingDot.points, this.pendingDot.anchor);
+                    this.pendingDot = null;
                 }
             }, 300);
             this.lastPenTap = {t: Date.now(), x: pt.x, y: pt.y};
@@ -716,7 +813,7 @@ export class DocOverlay {
         };
     }
 
-    private commitStroke(points: Point[]) {
+    private commitStroke(points: Point[], anchor?: StrokeAnchor | null) {
         if (points.length === 0) return;
         const cfg = this.deps.config;
         const tool = cfg.tool as "pen" | "highlighter";
@@ -724,8 +821,9 @@ export class DocOverlay {
             ? {color: cfg.penColor, width: cfg.penWidth, opacity: 1}
             : {color: cfg.hlColor, width: cfg.hlWidth, opacity: 0.45};
         const committed = this.store.addStroke(tool, {...stroke, simulate: this.activePointerType !== "pen"}, points);
-        if (this.curAnchor) committed.anchor = this.curAnchor;
-        this.pendingDotPoints = null;
+        const a = anchor !== undefined ? anchor : this.curAnchor;
+        if (a) committed.anchor = a;
+        this.pendingDot = null;
         this.redrawLive();
         this.paintCommitted(committed);
         this.changed();
