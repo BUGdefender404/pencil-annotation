@@ -19,6 +19,8 @@ export class DocStore {
     lastSavedAt = 0;
     /** in-flight save promise, so flushes can be awaited */
     saving: Promise<unknown> | null = null;
+    loaded = false;
+    loading: Promise<void> | null = null;
 
     private undoStack: Op[] = [];
     private redoStack: Op[] = [];

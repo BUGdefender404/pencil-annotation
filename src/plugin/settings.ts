@@ -1,7 +1,8 @@
 import type {Plugin} from "siyuan";
 
 export interface PencilSettings {
-    onlyStylus: boolean;
+    showFloatingBall: boolean;
+    mouseDrawing: boolean;
     doubleTapToggle: boolean;
     shapeSnap: boolean;
     showEraserCursor: boolean;
@@ -15,8 +16,9 @@ export interface PencilSettings {
 }
 
 export const DEFAULT_SETTINGS: PencilSettings = {
-    onlyStylus: true,
-    doubleTapToggle: true,
+    showFloatingBall: true,
+    mouseDrawing: false,
+    doubleTapToggle: false,
     shapeSnap: true,
     showEraserCursor: true,
     eraserRadius: 20,

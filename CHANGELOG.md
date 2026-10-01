@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.4 (2026-10-01)
+
+- Declare the Docker backend to fix the compatibility false negative.
+- Add floating-button visibility and independent mouse drawing (off by default).
+- Use writing-first input routing: native mouse editing remains available; fingers pan without activating document controls. Intercept Pointer, Touch and compatibility Mouse events before SiYuan's touch-to-mouse bridge.
+- Apply the gesture policy before contact, pace finger panning to animation frames, bound inertia, and arbitrate palm rejection across split views and the palette.
+- Continue sampling after capture loss until contact ends; retain coalesced/up endpoints and release pressure, including down/up-only short strokes. Paint completed strokes with the final renderer path.
+- Snapshot each stroke's tool/color, and make toolbar drag/cancel/disposal pointer-owned so foreign contacts cannot toggle drawing mode.
+- Preserve sampled ink and completed dots on interruption/navigation; reset canvas clipping between paints and refresh input policy after editor replacement.
+- Block drawing until a successful initial read, reject failed/malformed reads, share split-view stores, serialize saves and retain failed detached writes for retry.
+- Default pen-tip double-tap to off (preserve existing preferences), avoiding accidental eraser switches while writing punctuation.
+- Wrap the toolbar on narrow phones and keep controls within the viewport after rotation.
+- Add Chromium/WebKit regression checks and optional isolated SiYuan-host integration tests. Physical-device/PWA verification is separate from browser emulation.
+- Fix the packaging script on macOS/Linux and fail explicitly when the archiver fails instead of reporting a nonexistent ZIP.
+
 ## 0.2.3 (2026-10-01)
 
 - 新增：图形识别（GoodNotes 风格）——钢笔/荧光笔画完停顿约半秒，自动变规则图形：

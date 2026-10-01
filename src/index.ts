@@ -19,17 +19,14 @@ import {
     saveSettings,
     type PencilSettings,
 } from "./plugin/settings";
-import type {DocStore} from "./engine/store";
+import {DocStore} from "./engine/store";
 import type {ToolId} from "./engine/types";
 
 const SAVE_DEBOUNCE = 1200;
 
-interface PendingSave {
-    store: DocStore;
-}
-
 export default class PencilAnnotationPlugin extends Plugin {
-    private overlays = new Map<string, DocOverlay>();
+    private overlays = new Map<HTMLElement, DocOverlay>();
+    private documents = new Map<string, DocStore>();
     private palette!: Palette;
     private activeOverlay: DocOverlay | null = null;
 
@@ -39,7 +36,9 @@ export default class PencilAnnotationPlugin extends Plugin {
 
     private modeOn = false;
     private saveTimer: number | null = null;
-    private pendingSaves = new Map<string, PendingSave>();
+    private pendingSaves = new Set<DocStore>();
+    private saveRetries = 0;
+    private unloading = false;
     private syncingRemote = false;
 
     // ------------------------------------------------------------------ i18n
@@ -59,7 +58,7 @@ export default class PencilAnnotationPlugin extends Plugin {
     async onload() {
         this.settings = await loadSettings(this);
         this.overlaySettings = {
-            onlyStylus: this.settings.onlyStylus,
+            mouseDrawing: this.settings.mouseDrawing,
             doubleTapToggle: this.settings.doubleTapToggle,
             shapeSnap: this.settings.shapeSnap,
             showEraserCursor: this.settings.showEraserCursor,
@@ -110,7 +109,8 @@ export default class PencilAnnotationPlugin extends Plugin {
             onAction: (action) => this.onPaletteAction(action),
             onHandleActivate: () => this.toggleMode(),
         });
-        this.palette.setMode(false); // shows the floating handle as entry point
+        this.palette.setHandleVisible(this.settings.showFloatingBall);
+        this.palette.setMode(false);
 
         if (["desktop", "desktop-window", "browser-desktop"].includes(getFrontend())) {
             this.addTopBar({
@@ -135,7 +135,8 @@ export default class PencilAnnotationPlugin extends Plugin {
         window.addEventListener("resize", this.onViewportResize);
         document.addEventListener("keydown", this.onKeyDown, true);
         document.addEventListener("visibilitychange", this.onVisibilityChange);
-        window.addEventListener("pagehide", () => void this.flushAll());
+        window.addEventListener("pagehide", this.onPageHide);
+        window.addEventListener("online", this.onOnline);
     }
 
     onLayoutReady() {
@@ -144,20 +145,26 @@ export default class PencilAnnotationPlugin extends Plugin {
 
     /** attach overlays to every editor that is already open */
     private attachExisting() {
+        if (this.unloading) return;
         for (const editor of getAllEditor()) {
             this.attachProtyle(editor as unknown as ProtyleLike);
         }
     }
 
     async onunload() {
+        this.unloading = true;
+        window.removeEventListener("pagehide", this.onPageHide);
+        window.removeEventListener("online", this.onOnline);
         window.removeEventListener("resize", this.onViewportResize);
         document.removeEventListener("keydown", this.onKeyDown, true);
         document.removeEventListener("visibilitychange", this.onVisibilityChange);
-        await this.flushAll();
-        for (const overlay of this.overlays.values()) overlay.destroy();
+        for (const overlay of this.overlays.values()) {
+            overlay.destroy(); // stop input and finalize BEFORE the final persistence barrier
+            if (overlay.store.dirty || overlay.store.saving) this.pendingSaves.add(overlay.store);
+        }
         this.overlays.clear();
-        this.palette.toolbar.remove();
-        this.palette.handle.remove();
+        this.palette.destroy();
+        await this.flushAll();
     }
 
     /**
@@ -171,10 +178,17 @@ export default class PencilAnnotationPlugin extends Plugin {
         try {
             let mergedAny = false;
             for (const overlay of this.overlays.values()) {
-                const remote = await loadPayload(this, overlay.docId);
-                if (remote && overlay.applyRemote(remote)) mergedAny = true;
+                try {
+                    const remote = await loadPayload(this, overlay.docId);
+                    if (remote && overlay.applyRemote(remote)) mergedAny = true;
+                } catch (e) {
+                    showMessage(this.t("loadFailed", {msg: String(e)}), 6000, "error");
+                }
             }
-            if (mergedAny) showMessage(this.t("syncMerged"));
+            if (mergedAny) {
+                for (const overlay of this.overlays.values()) overlay.redrawAll();
+                showMessage(this.t("syncMerged"));
+            }
         } finally {
             this.syncingRemote = false;
         }
@@ -188,27 +202,41 @@ export default class PencilAnnotationPlugin extends Plugin {
 
     private attachProtyle(protyle: ProtyleLike) {
         const p = protyle as ProtyleLike;
-        if (!p?.element) return;
+        if (!p?.element || this.unloading) return;
 
-        const key = p.id ?? "";
+        const key = p.element;
         const existing = this.overlays.get(key);
         if (existing) {
             const docId = this.docIdOf(p);
-            if (!docId || existing.docId === docId) return; // already attached
+            if (!docId) return;
+            if (existing.docId === docId) {
+                existing.refreshProtyle(p);
+                return;
+            }
             // mobile reuses one protyle for every doc — rebuild the overlay
             this.detachProtyle(p);
         }
 
+        const docId = this.docIdOf(p);
+        if (!docId) return;
+        let store = this.documents.get(docId);
+        if (!store) {
+            store = new DocStore(docId);
+            this.documents.set(docId, store);
+        }
         const overlay = DocOverlay.attach(p, {
+            store,
             settings: this.overlaySettings,
             config: this.config,
             onDirty: () => this.scheduleSave(overlay as DocOverlay),
             onStateChange: () => this.refreshPalette(),
             onDoubleTapToggle: () => this.togglePenEraser(),
             loadPayload: (docId) => loadPayload(this, docId),
+            onActivate: () => { this.activeOverlay = overlay; },
+            onLoadError: (e) => showMessage(this.t("loadFailed", {msg: String(e)}), 6000, "error"),
         });
         if (!overlay) return;
-        this.overlays.set(p.id || overlay.docId, overlay);
+        this.overlays.set(key, overlay);
         this.activeOverlay = overlay;
         if (this.modeOn) overlay.setMode(true);
         this.refreshPalette();
@@ -216,26 +244,28 @@ export default class PencilAnnotationPlugin extends Plugin {
 
     private detachProtyle(protyle: ProtyleLike) {
         const p = protyle as ProtyleLike;
-        const key = p?.id ?? "";
+        const key = p?.element;
         const overlay = this.overlays.get(key);
         if (!overlay) return;
-        if (overlay.store.dirty) {
-            void this.flushOverlay(overlay);
+        overlay.destroy(); // finalize completed dots and interrupted strokes BEFORE saving
+        if (overlay.store.dirty || overlay.store.saving) {
+            this.pendingSaves.add(overlay.store);
+            void this.flushAll();
         }
-        overlay.destroy();
         this.overlays.delete(key);
+        this.releaseUnusedDocuments();
         if (this.activeOverlay === overlay) this.activeOverlay = null;
         this.refreshPalette();
     }
 
     private setActiveProtyle(protyle: ProtyleLike) {
         if (!protyle?.element) return;
-        const overlay = this.overlays.get(protyle.id ?? "");
+        const overlay = this.overlays.get(protyle.element);
         if (overlay) {
             this.activeOverlay = overlay;
         } else {
             this.attachProtyle(protyle);
-            this.activeOverlay = this.overlays.get(protyle.id ?? "") ?? this.activeOverlay;
+            this.activeOverlay = this.overlays.get(protyle.element) ?? this.activeOverlay;
         }
         this.refreshPalette();
     }
@@ -319,30 +349,43 @@ export default class PencilAnnotationPlugin extends Plugin {
     // ------------------------------------------------------------ persistence
 
     private scheduleSave(overlay: DocOverlay) {
-        this.pendingSaves.set(overlay.docId, {store: overlay.store});
+        this.pendingSaves.add(overlay.store);
+        this.saveRetries = 0;
+        // Split views share one document, including undo and unsaved ink.
+        for (const other of this.overlays.values()) {
+            if (other !== overlay && other.store === overlay.store) other.redrawAll();
+        }
+        this.armSave(SAVE_DEBOUNCE);
+    }
+
+    private armSave(delay: number) {
+        if (this.unloading) return;
         if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
         this.saveTimer = window.setTimeout(() => {
             this.saveTimer = null;
             void this.flushAll();
-        }, SAVE_DEBOUNCE);
+        }, delay);
     }
 
-    private async flushOverlay(overlay: DocOverlay) {
-        const store = overlay.store;
-        if (!store.dirty || store.saving) return;
-        store.dirty = false;
-        const payload = store.serialize();
-        store.saving = savePayload(this, payload).then((ok) => {
-            if (ok) {
+    private async flushStore(store: DocStore) {
+        if (store.saving) {
+            await store.saving;
+            return;
+        }
+        if (!store.loaded || !store.dirty) return;
+        store.saving = (async () => {
+            while (store.dirty) {
+                const payload = store.serialize();
+                store.dirty = false;
+                const ok = await savePayload(this, payload);
+                if (!ok) {
+                    store.dirty = true;
+                    showMessage(this.t("saveFailed", {msg: this.t("saveRetry")}), 6000, "error");
+                    break;
+                }
                 store.lastSavedAt = payload.updatedAt;
-            } else {
-                store.dirty = true; // retry on the next flush
             }
-        }).catch(() => {
-            store.dirty = true;
-        }).finally(() => {
-            store.saving = null;
-        });
+        })().finally(() => { store.saving = null; });
         await store.saving;
     }
 
@@ -351,30 +394,41 @@ export default class PencilAnnotationPlugin extends Plugin {
             window.clearTimeout(this.saveTimer);
             this.saveTimer = null;
         }
-        const jobs: Promise<void>[] = [];
         for (const overlay of this.overlays.values()) {
-            if (overlay.store.dirty) jobs.push(this.flushOverlay(overlay));
+            if (overlay.store.dirty || overlay.store.saving) this.pendingSaves.add(overlay.store);
         }
-        for (const pending of this.pendingSaves.values()) {
-            if (pending.store.dirty) {
-                const payload = pending.store.serialize();
-                pending.store.dirty = false;
-                jobs.push(
-                    savePayload(this, payload).then((ok) => {
-                        if (ok) pending.store.lastSavedAt = payload.updatedAt;
-                        else pending.store.dirty = true;
-                    }).catch(() => {
-                        pending.store.dirty = true;
-                    }),
-                );
-            }
+        await Promise.all([...this.pendingSaves].map(store => this.flushStore(store)));
+        for (const store of this.pendingSaves) {
+            if (!store.dirty && !store.saving) this.pendingSaves.delete(store);
         }
-        this.pendingSaves.clear();
-        await Promise.all(jobs);
+        // Keep failed/detached stores until success; bounded automatic retries avoid a busy loop.
+        if (this.pendingSaves.size && this.saveRetries < 3) {
+            this.armSave(2000 * 2 ** this.saveRetries++);
+        }
+        this.releaseUnusedDocuments();
     }
 
+    private releaseUnusedDocuments() {
+        for (const [id, store] of this.documents) {
+            if (!store.dirty && !store.saving &&
+                ![...this.overlays.values()].some(o => o.store === store)) this.documents.delete(id);
+        }
+    }
+
+    private onPageHide = () => {
+        for (const overlay of this.overlays.values()) overlay.finalizeInput();
+        void this.flushAll();
+    };
+
+    private onOnline = () => {
+        this.saveRetries = 0;
+        for (const overlay of this.overlays.values()) overlay.setMode(this.modeOn);
+        void this.flushAll();
+    };
+
     private onVisibilityChange = () => {
-        if (document.visibilityState === "hidden") void this.flushAll();
+        if (document.visibilityState === "hidden") this.onPageHide();
+        else this.onOnline();
     };
 
     private onViewportResize = () => {
@@ -469,11 +523,18 @@ export default class PencilAnnotationPlugin extends Plugin {
             return input;
         };
 
-        row(this.t("settingOnlyStylus"), this.t("settingOnlyStylusHint"),
-            mkCheckbox(() => this.overlaySettings.onlyStylus, (v) => {
-                this.overlaySettings.onlyStylus = v;
-                this.settings.onlyStylus = v;
+        row(this.t("settingShowFloatingBall"), this.t("settingShowFloatingBallHint"),
+            mkCheckbox(() => this.settings.showFloatingBall, (v) => {
+                this.settings.showFloatingBall = v;
+                this.palette.setHandleVisible(v);
             }));
+        // Keep the switch on all frontends: Android tablets/phones can also use a mouse.
+        row(this.t("settingMouseDrawing"), this.t("settingMouseDrawingHint"),
+            mkCheckbox(() => this.settings.mouseDrawing, (v) => {
+                this.settings.mouseDrawing = v;
+                this.overlaySettings.mouseDrawing = v;
+            }));
+
         row(this.t("settingDoubleTap"), this.t("settingDoubleTapHint"),
             mkCheckbox(() => this.overlaySettings.doubleTapToggle, (v) => {
                 this.overlaySettings.doubleTapToggle = v;
@@ -526,6 +587,7 @@ export default class PencilAnnotationPlugin extends Plugin {
     }
 
     private applyAndPersistSettings() {
+        for (const overlay of this.overlays.values()) overlay.refreshInputPolicy();
         saveSettings(this, this.settings);
         this.persistSession();
     }

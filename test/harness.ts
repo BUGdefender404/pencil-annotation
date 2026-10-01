@@ -7,6 +7,10 @@ import {DocOverlay, type OverlayConfig, type OverlaySettings, type ProtyleLike} 
 import {Palette} from "../src/overlay/toolbar";
 import {strokesToPngBlob} from "../src/plugin/exportImage";
 import type {PencilPayload} from "../src/engine/types";
+import PencilAnnotationPlugin from "../src/index";
+import {DEFAULT_SETTINGS, loadSettings} from "../src/plugin/settings";
+import {loadPayload, savePayload} from "../src/plugin/api";
+import {messages} from "./siyuan";
 
 const ZH: Record<string, string> = {
     toolPen: "钢笔", toolHighlighter: "荧光笔", toolEraser: "橡皮擦", toolSelect: "选择",
@@ -21,8 +25,8 @@ const app = document.getElementById("app")!;
 const protyleEl = document.createElement("div");
 protyleEl.className = "protyle";
 Object.assign(protyleEl.style, {
-    position: "relative", width: "900px", height: "620px",
-    margin: "40px auto", background: "#fff",
+    position: "relative", width: "min(900px, calc(100vw - 16px))", height: "min(620px, calc(100dvh - 32px))",
+    margin: "16px auto", background: "#fff",
     boxShadow: "0 2px 12px rgba(0,0,0,.12)", overflow: "hidden",
 });
 
@@ -41,8 +45,8 @@ const wysiwygEl = document.createElement("div");
 wysiwygEl.className = "protyle-wysiwyg";
 wysiwygEl.setAttribute("contenteditable", "true");
 Object.assign(wysiwygEl.style, {
-    boxSizing: "border-box", width: "100%", padding: "0 60px 400px",
-    minHeight: "600px", outline: "none", lineHeight: "1.9", fontSize: "15px",
+    boxSizing: "border-box", width: "100%", padding: "0 24px 400px",
+    minHeight: "1600px", outline: "none", lineHeight: "1.9", fontSize: "15px",
 });
 const paragraphs = [
     "牛顿第一定律：一切物体总保持匀速直线运动状态或静止状态，直到有外力迫使它改变这种状态为止。",
@@ -54,9 +58,35 @@ const paragraphs = [
 for (const p of paragraphs) {
     const el = document.createElement("p");
     el.textContent = p;
+    el.dataset.nodeId = `block-${wysiwygEl.children.length}`;
     wysiwygEl.appendChild(el);
 }
 
+const controls = document.createElement("div");
+controls.innerHTML = '<label><input id="todo" type="checkbox"> Task</label><div style="overflow:auto"><table style="width:1200px"><tr><td><button id="table-drag" class="table__resize" draggable="true">Table handle</button></td></tr></table></div>';
+controls.contentEditable = "false";
+wysiwygEl.prepend(controls);
+const nativeEvents = {down: 0, click: 0, move: 0, mouse: 0, touch: 0, bridge: 0};
+// Register host-like document capture BEFORE the plugin. SiYuan also bridges
+// TouchEvents to legacy mouse handlers; PointerEvent-only tests miss this path.
+for (const type of ["mousedown", "mousemove", "mouseup"] as const) {
+    document.addEventListener(type, e => {
+        if (e.target instanceof Node && contentEl.contains(e.target)) nativeEvents.mouse++;
+    }, true);
+}
+for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"] as const) {
+    document.addEventListener(type, e => {
+        if (!(e.target instanceof Element) || !contentEl.contains(e.target)) return;
+        nativeEvents.touch++;
+        if (e.target.closest(".table__resize") && type === "touchstart") {
+            nativeEvents.bridge++;
+            e.target.dispatchEvent(new MouseEvent("mousedown", {bubbles: true, cancelable: true}));
+        }
+    }, true);
+}
+wysiwygEl.addEventListener("pointerdown", () => nativeEvents.down++);
+wysiwygEl.addEventListener("pointermove", () => nativeEvents.move++);
+wysiwygEl.addEventListener("click", () => nativeEvents.click++);
 contentEl.append(titleEl, wysiwygEl);
 protyleEl.appendChild(contentEl);
 app.appendChild(protyleEl);
@@ -72,10 +102,7 @@ const fakeProtyle: ProtyleLike = {
 
 // -------------------------------------------------------------- overlay deps
 const settings: OverlaySettings = {
-    onlyStylus: true,
-    doubleTapToggle: true,
-    showEraserCursor: true,
-    eraserRadius: 20,
+    ...DEFAULT_SETTINGS,
 };
 const config: OverlayConfig = {
     tool: "pen",
@@ -116,7 +143,10 @@ const overlay = DocOverlay.attach(fakeProtyle, {
         config.tool = config.tool === "eraser" ? "pen" : "eraser";
         log(`double-tap → tool=${config.tool}`);
     },
-    loadPayload: async () => preset,
+    loadPayload: async () => {
+        await new Promise(r => setTimeout(r, Number(new URLSearchParams(location.search).get("loadDelay")) || 0));
+        return preset;
+    },
 })!;
 
 // palette (same wiring as the plugin entry)
@@ -132,6 +162,7 @@ const palette = new Palette({
     onColor: (c) => log(`color=${c}`),
     onWidth: (w) => log(`width=${w}`),
     onAction: (a) => log(`action=${a}`),
+    onHandleActivate: () => { overlay.setMode(!overlay.mode); palette.setMode(overlay.mode); },
 });
 palette.setMode(false);
 
@@ -147,10 +178,10 @@ function log(msg: string) {
     logEl.scrollTop = logEl.scrollHeight;
 }
 
-const captureEl = () => overlay.root.querySelector(".pa-capture") as HTMLElement;
+const captureEl = () => wysiwygEl;
 
 let pointerSeq = 100;
-function fire(el: HTMLElement, type: string, x: number, y: number, opts: {pointerType?: string; pressure?: number; pointerId?: number} = {}) {
+function fire(el: HTMLElement, type: string, x: number, y: number, opts: {pointerType?: string; pressure?: number; pointerId?: number; buttons?: number; button?: number} = {}) {
     const ev = new PointerEvent(type, {
         bubbles: true,
         cancelable: true,
@@ -161,7 +192,8 @@ function fire(el: HTMLElement, type: string, x: number, y: number, opts: {pointe
         pointerType: opts.pointerType ?? "pen",
         pressure: opts.pressure ?? 0.5,
         isPrimary: true,
-        buttons: type === "pointerup" || type === "pointercancel" ? 0 : 1,
+        button: opts.button ?? (type === "pointermove" ? -1 : 0),
+        buttons: opts.buttons ?? (type === "pointerup" || type === "pointercancel" ? 0 : 1),
     });
     el.dispatchEvent(ev);
 }
@@ -181,7 +213,7 @@ function stroke(points: Array<[number, number, number?]>, opts: {pointerType?: s
         if (i === 0) {
             fire(el, "pointerdown", c.x, c.y, {pointerType: opts.pointerType ?? "pen", pressure: p ?? 0.4, pointerId: pid});
         } else if (i === points.length - 1) {
-            fire(el, "pointerup", c.x, c.y, {pointerType: opts.pointerType ?? "pen", pressure: p ?? 0.4, pointerId: pid});
+            fire(el, "pointerup", c.x, c.y, {pointerType: opts.pointerType ?? "pen", pressure: 0, pointerId: pid});
         } else {
             fire(el, "pointermove", c.x, c.y, {pointerType: opts.pointerType ?? "pen", pressure: p ?? 0.4, pointerId: pid});
         }
@@ -192,6 +224,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------------ window API
 (window as any).harness = {
+    DocOverlay,
+    nativeEvents,
+    contentEl,
+    wysiwygEl,
+    fakeProtyle,
+    createPlugin: () => new PencilAnnotationPlugin({
+        app: {} as any, name: "pencil-annotation", displayName: "Pencil Annotation", i18n: {},
+    }),
+    loadSettings,
+    loadPayload,
+    savePayload,
+    messages,
     overlay,
     palette,
     config,
@@ -204,7 +248,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     sleep,
     log,
     async exportBlob(bg: "white" | "transparent") {
-        const blob = await strokesToPngBlob(overlay.store, bg);
+        const blob = await strokesToPngBlob(overlay.store, bg, overlay.strokeOffsets());
         log(`export blob: ${blob.size} bytes`);
         return blob.size;
     },

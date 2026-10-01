@@ -80,6 +80,8 @@ export class Palette {
     private readonly deps: PaletteDeps;
     private state: PaletteState = {mode: false, canUndo: false, canRedo: false, hasSelection: false};
     private suppressClick = false;
+    private stopDrag: (() => void) | null = null;
+    private showHandle = true;
     private dock: Dock = loadDock();
 
     constructor(deps: PaletteDeps) {
@@ -92,6 +94,7 @@ export class Palette {
 
         this.handle = document.createElement("button");
         this.handle.className = "pa-handle";
+        this.handle.setAttribute("aria-label", deps.i18n("topbarTitle"));
         this.handle.innerHTML = ICONS.penStroke;
         this.handle.style.display = "none";
         document.body.appendChild(this.handle);
@@ -189,10 +192,14 @@ export class Palette {
         for (const [elRaw, key] of [[this.toolbar, POS_KEY], [this.handle, HANDLE_POS_KEY]] as const) {
             const el = elRaw as HTMLElement;
             el.addEventListener("pointerdown", (e: PointerEvent) => {
+                if (this.stopDrag || e.button !== 0) return;
                 const target = e.target as HTMLElement;
                 if (el === this.toolbar && target.closest("button,input,.pa-width")) return; // controls stay interactive
                 e.preventDefault();
                 e.stopPropagation();
+                this.suppressClick = false;
+                const pointerId = e.pointerId;
+                try { el.setPointerCapture(pointerId); } catch { /* window listeners cover capture refusal */ }
                 const rect = el.getBoundingClientRect();
                 const offX = e.clientX - rect.left;
                 const offY = e.clientY - rect.top;
@@ -200,6 +207,7 @@ export class Palette {
                 const startX = e.clientX;
                 const startY = e.clientY;
                 const move = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
                     // sub-threshold drift (Apple Pencil taps jitter ~1-2px) is
                     // a tap, not a drag — otherwise the ball never activates
                     if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
@@ -210,9 +218,22 @@ export class Palette {
                         this.place(el, {x: ev.clientX - offX, y: ev.clientY - offY});
                     }
                 };
-                const up = (ev: PointerEvent) => {
+                const cleanup = () => {
                     window.removeEventListener("pointermove", move);
                     window.removeEventListener("pointerup", up);
+                    window.removeEventListener("pointercancel", cancel);
+                    window.removeEventListener("blur", cleanup);
+                    if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
+                    this.stopDrag = null;
+                };
+                const cancel = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
+                    this.suppressClick = true;
+                    cleanup();
+                };
+                const up = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
+                    cleanup();
                     if (moved) {
                         if (el === this.toolbar) {
                             savePos(key, {
@@ -231,8 +252,11 @@ export class Palette {
                         this.suppressClick = true;
                     }
                 };
+                this.stopDrag = cleanup;
                 window.addEventListener("pointermove", move);
                 window.addEventListener("pointerup", up);
+                window.addEventListener("pointercancel", cancel);
+                window.addEventListener("blur", cleanup);
             });
         }
     }
@@ -421,12 +445,17 @@ export class Palette {
     setMode(on: boolean) {
         this.state.mode = on;
         this.toolbar.style.display = on ? "" : "none";
-        this.handle.style.display = on ? "none" : "";
+        this.handle.style.display = on || !this.showHandle ? "none" : "";
         this.handle.classList.toggle("pa-handle--on", on);
         if (on) {
             if (this.dock === "free") this.placeDefaultIfFloating();
             else this.snapToDock();
         }
+    }
+
+    setHandleVisible(visible: boolean) {
+        this.showHandle = visible;
+        this.handle.style.display = this.state.mode || !visible ? "none" : "";
     }
 
     update(state: Partial<PaletteState>) {
@@ -445,7 +474,17 @@ export class Palette {
         this.renderToolbar();
     }
 
+    destroy() {
+        this.stopDrag?.();
+        this.toolbar.remove();
+        this.handle.remove();
+    }
+
     repositionForViewport() {
+        this.place(this.toolbar, {
+            x: parseFloat(this.toolbar.style.left || "0"),
+            y: parseFloat(this.toolbar.style.top || "0"),
+        });
         this.snapToDock();
         const hx = parseFloat(this.handle.style.left || "0");
         const hy = parseFloat(this.handle.style.top || "0");

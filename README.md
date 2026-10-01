@@ -6,14 +6,14 @@ Handwrite on SiYuan documents with **Apple Pencil / a stylus**: a GoodNotes-styl
 
 ## Features
 
-- **Pressure pen** — real stylus pressure via Pointer Events (Apple Pencil); mouse/touchpad falls back to velocity-based simulated pressure.
+- **Pressure pen** — stylus pressure via Pointer Events, including Android pens and Apple Pencil where the device/browser reports it. Mouse drawing is off by default; when enabled it uses fixed width.
 - **Highlighter** — translucent, `multiply`-blended so text stays readable through the mark; overlaps between strokes deepen naturally (no dark spots inside a single stroke).
 - **Eraser** — stroke-level erase while dragging, adjustable size, with a cursor ring.
 - **Select** — tap a stroke to select, then drag to move, duplicate or delete it.
 - **Undo / redo** — toolbar buttons (plus `Ctrl+Z` / `Ctrl+Shift+Z` on desktop), up to 100 steps.
-- **Palm rejection** — in drawing mode fingers scroll the page and only a stylus can draw (toggleable in settings).
-- **Apple Pencil double-tap** — quickly double-tap the page with the pencil to switch pen ↔ eraser (toggleable).
-- **Floating toolbar** — draggable handle + palette with position memory; desktop also gets a top-bar button.
+- **Writing-first inputs** — the pen draws, fingers only pan (including horizontal tables), and the mouse edits normally unless mouse drawing is enabled. Palm contacts are rejected during ink input. Exit drawing mode before tapping tasks, resizing tables or editing by touch; normal pen/touch interaction is restored on exit.
+- **Pen-tip double-tap** — optionally tap the page twice to switch pen ↔ eraser. Off by default to avoid mistaking punctuation for a gesture; existing explicit preferences are preserved. This is not the pen's barrel gesture.
+- **Floating toolbar** — draggable handle + palette with position memory. Hide the handle in settings; desktop top-bar/command entry remains available, and mobile users can restore it in plugin settings. The toolbar wraps on narrow screens.
 - **Export** — composite strokes to PNG (white or transparent background), save to assets, optionally insert into the document.
 - **English & Simplified Chinese UI**.
 
@@ -31,6 +31,8 @@ This is the plugin-private petal directory, which is part of SiYuan's encrypted 
 - when another device syncs new strokes in, open editors **merge by stroke id** and show a notice;
 - concurrent edits on two devices merge as a union by stroke id (local wins for identical ids).
 
+Drawing waits for the initial read; failed reads never become empty writable documents. Reconnect or toggle drawing mode to retry. Split views share document state and writes are serialized per document. Failed writes remain in session memory with a warning and up to three automatic retries: **keep the page open until saving succeeds**. A page-hide flush cannot guarantee durability through a killed browser, power loss or offline shutdown. Cross-device merging is not real-time collaboration or deletion-conflict resolution.
+
 ## Install (dev build)
 
 1. `npm install && npm run build` → output in `build/`;
@@ -39,6 +41,12 @@ This is the plugin-private petal directory, which is part of SiYuan's encrypted 
    node scripts/copy-assets.mjs "/path/to/workspace/data/plugins"
    ```
 3. restart SiYuan (or reload from Settings → Marketplace) and enable **Pencil Annotation** under downloaded plugins.
+
+### Docker, Android tablets/phones and browser PWAs
+
+The manifest supports the `docker` backend and both browser frontends. Install the built files in the **container's actual workspace** under `data/plugins/pencil-annotation/`; persist the workspace and ensure it is writable. Drawing runs in the browser, so the container needs neither a stylus nor Node.js at runtime.
+
+Android tablets, pen-capable phones and PWAs use the same input path. Real pressure requires the browser to report `pointerType="pen"`. If the driver exposes a tablet only as a mouse, the browser cannot distinguish it from a real mouse: prefer the driver's pen/pressure mode (Windows Ink on Windows), or enable mouse drawing as a fallback. Include OS/browser versions, pen model and PWA status in device bug reports.
 
 ### On the iPad
 
@@ -63,14 +71,19 @@ npm run typecheck
 npm run build
 npm run deploy -- "/path/to/workspace/data/plugins"
 npm run harness     # browser test bench at http://localhost:5199/test/harness.html
+npx playwright install chromium webkit
+npm test            # both engines; BROWSER=chromium selects one
+SIYUAN_KERNEL=/path/to/SiYuan-Kernel npm run test:host  # optional real-host check
 npm run pack
 ```
 
-The harness (`test/harness.html`) mocks the SiYuan editor DOM and drives the real input path with synthetic PointerEvents (including pressure), so drawing, highlighter blending, erasing, selection, gestures and export can be verified without launching SiYuan.
+The harness mocks the SiYuan DOM and its independent Pointer/Touch/Mouse input paths. Checks cover eight-direction short strokes, capture-loss continuation, final endpoints, palm/split-view arbitration, toolbar contact ownership, frame-paced panning, persistence and phone layouts. Chromium also receives browser-protocol pen/touch input. `test:host` overlaps pen and touch on the real mobile frontend and checks endpoints, editor state and persisted ink, using a temporary workspace without opening existing notes.
+
+Browser/mobile-viewport automation is **not physical Android/iPad or installed-PWA certification**. Hardware pressure, OS palm rejection and interruptions still need device checks; WebKit pen injection in the tests uses synthetic events.
 
 ## Known limitations (v1 roadmap)
 
-- Strokes are anchored to **document coordinates**: reflowing text (window resize, font-size change) does not move existing strokes — same trade-off as annotating a PDF.
+- Coordinates use CSS pixels, not physical screen pixels. Strokes follow their anchor block's translation, not individual characters. Different desktop/tablet/phone layouts, font sizes or wrapping can misalign ink; use native text highlighting for an exact text range.
 - No layers, no lasso multi-select, no pixel eraser (planned).
 - Undo history is per-session and resets when the document closes (strokes themselves persist).
 - Very long documents use a viewport canvas with culling; thousands of strokes may need tile caching for smoother scrolling.

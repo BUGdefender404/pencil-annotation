@@ -4,7 +4,8 @@ import {defineConfig} from "vite";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
-export default defineConfig({
+export default defineConfig(({command}) => ({
+    resolve: command === "serve" ? {alias: {siyuan: resolve(__dirname, "test/siyuan.ts")}} : undefined,
     build: {
         outDir: "build",
         emptyOutDir: true,
@@ -18,4 +19,4 @@ export default defineConfig({
         },
         sourcemap: process.env.NODE_ENV === "development",
     },
-});
+}));

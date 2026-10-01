@@ -27,18 +27,13 @@
     mix-blend-mode: multiply;
 }
 
-.pa-capture {
-    position: absolute;
-    pointer-events: none;
-    touch-action: pan-y;
-    -webkit-user-select: none;
-    user-select: none;
+/* Writing mode reserves direct-manipulation gestures BEFORE contact.
+   Nested table/code scrollers also need this policy: fingers pan through the
+   plugin, while native mouse selection/editing remains available. */
+.pa-writing,
+.pa-writing * {
+    touch-action: none;
     -webkit-touch-callout: none;
-    cursor: crosshair;
-}
-
-.pa-capture--active {
-    pointer-events: auto;
 }
 
 /* ---------- floating entry handle (mobile / desktop) ---------- */
@@ -301,6 +296,45 @@
     top: 50%;
     /* min (thin) at the bottom, max (thick) at the top */
     transform: translate(-50%, -50%) rotate(90deg);
+}
+
+/* Compact phone layout: keep every action reachable without horizontal overflow. */
+@media (max-width: 600px) {
+    .pa-toolbar,
+    .pa-toolbar.pa-toolbar--vertical {
+        box-sizing: border-box;
+        width: calc(100vw - 16px);
+        max-height: calc(100dvh - 32px);
+        overflow-y: auto;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        border-radius: 12px;
+        padding: 6px;
+        gap: 4px;
+    }
+    .pa-toolbar .pa-toolbar__group,
+    .pa-toolbar .pa-toolbar__selection {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    .pa-toolbar .pa-toolbar__options {
+        order: 1;
+        flex: 1 0 100%;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        box-sizing: border-box;
+        max-width: 100%;
+        max-height: none;
+        padding: 4px 0;
+    }
+    .pa-toolbar .pa-toolbar__sep { display: none; }
+    .pa-toolbar .pa-btn { width: 40px; height: 40px; }
+    .pa-toolbar .pa-swatch { width: 28px; height: 28px; }
+    .pa-toolbar .pa-width { flex-direction: row; padding: 4px; }
+    .pa-toolbar .pa-width__slider { width: 104px; height: 22px; }
+    .pa-toolbar .pa-width input[type="range"] { position: static; transform: none; }
 }
 
 /* ---------- topbar icon ---------- */
