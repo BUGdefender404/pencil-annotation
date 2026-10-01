@@ -1,0 +1,319 @@
+/* Pencil Annotation plugin styles */
+
+/* ---------- overlay inside each editor ---------- */
+.pa-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+    overflow: hidden;
+    contain: strict;
+}
+
+.pa-overlay--hidden {
+    display: none;
+}
+
+.pa-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+/* highlighter layers multiply so text/ink below stays visible through the mark */
+.pa-canvas--multiply {
+    mix-blend-mode: multiply;
+}
+
+.pa-capture {
+    position: absolute;
+    pointer-events: none;
+    touch-action: pan-y;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    cursor: crosshair;
+}
+
+.pa-capture--active {
+    pointer-events: auto;
+}
+
+/* ---------- floating entry handle (mobile / desktop) ---------- */
+.pa-handle {
+    position: fixed;
+    z-index: 1000;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: none;
+    padding: 0;
+    background: rgba(28, 28, 32, 0.88);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.pa-handle:active {
+    transform: scale(0.94);
+}
+
+.pa-handle svg {
+    width: 24px;
+    height: 24px;
+}
+
+/* drawing-mode-on look */
+.pa-handle--on {
+    background: #6366f1;
+}
+
+/* ---------- floating toolbar palette ---------- */
+.pa-toolbar {
+    position: fixed;
+    z-index: 1001;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px;
+    border-radius: 16px;
+    background: rgba(28, 28, 32, 0.92);
+    color: #fff;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.pa-toolbar__group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.pa-toolbar__sep {
+    width: 1px;
+    height: 22px;
+    margin: 0 4px;
+    background: rgba(255, 255, 255, 0.16);
+    flex: none;
+}
+
+.pa-btn {
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 11px;
+    padding: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex: none;
+}
+
+.pa-btn svg {
+    width: 21px;
+    height: 21px;
+    pointer-events: none;
+}
+
+.pa-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.pa-btn--active {
+    background: #6366f1;
+    color: #fff;
+}
+
+.pa-btn:disabled {
+    opacity: 0.32;
+    cursor: default;
+}
+
+.pa-btn:disabled:hover {
+    background: transparent;
+}
+
+/* tool options row (colors / widths) */
+.pa-toolbar__options {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px;
+    max-width: 46vw;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.pa-toolbar__options::-webkit-scrollbar {
+    display: none;
+}
+
+.pa-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    flex: none;
+    position: relative;
+}
+
+.pa-swatch--active {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+/* rheostat-style width slider (pen / highlighter / eraser) */
+.pa-width {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 6px;
+    flex: none;
+}
+
+.pa-width__dot {
+    display: block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.9);
+    flex: none;
+}
+
+.pa-width__slider {
+    position: relative;
+    width: 104px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    flex: none;
+}
+
+.pa-width input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 104px;
+    height: 22px;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.pa-width input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.28);
+}
+
+.pa-width input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: #6366f1;
+    border: 2px solid #fff;
+    box-sizing: border-box;
+}
+
+.pa-width__val {
+    font-size: 11px;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.65);
+    min-width: 18px;
+    text-align: left;
+    flex: none;
+}
+
+/* selection action buttons shown while a stroke is selected */
+.pa-toolbar__selection {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+/* ---------- docked (vertical) toolbar for left/right edges ---------- */
+.pa-toolbar--vertical {
+    flex-direction: column;
+    padding: 6px 5px;
+}
+
+.pa-toolbar--vertical .pa-toolbar__group,
+.pa-toolbar--vertical .pa-toolbar__selection {
+    flex-direction: column;
+}
+
+.pa-toolbar--vertical .pa-toolbar__sep {
+    width: 24px;
+    height: 1px;
+    margin: 4px 0;
+}
+
+.pa-toolbar--vertical .pa-toolbar__options {
+    flex-direction: column;
+    max-width: none;
+    max-height: 38vh;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.pa-toolbar--vertical .pa-toolbar__options span {
+    writing-mode: initial;
+}
+
+/* vertical (docked left/right): rotate the slider to run along the edge */
+.pa-toolbar--vertical .pa-width {
+    flex-direction: column;
+    gap: 5px;
+    padding: 4px 0;
+}
+
+.pa-toolbar--vertical .pa-width__slider {
+    width: 22px;
+    height: 104px;
+}
+
+.pa-toolbar--vertical .pa-width input[type="range"] {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    /* min (thin) at the bottom, max (thick) at the top */
+    transform: translate(-50%, -50%) rotate(90deg);
+}
+
+/* ---------- topbar icon ---------- */
+svg.pa-topbar-svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* SiYuan's base.css ships a bare `svg { fill: currentcolor }` that overrides our
+   fill="none" attribute and turns every stroke icon into a solid blob. */
+.pa-toolbar svg,
+.pa-handle svg,
+svg.pa-topbar-svg {
+    fill: none;
+    stroke: currentColor;
+}
