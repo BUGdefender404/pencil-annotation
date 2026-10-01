@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.5 (2026-10-01)
+
+感谢 [@Jasaxion](https://github.com/Jasaxion) 在 [PR #1](https://github.com/BUGdefender404/pencil-annotation/pull/1) 里仔细的排查，以下五个问题均由其发现：
+
+- 修复：关闭「画完停顿自动变规则图形」开关后识别仍然生效（开关此前没接到识别入口）
+- 修复：重绘时裁剪区域不断累积，滚动/局部刷新久了笔迹会逐渐消失（canvas clip 未成对 save/restore）
+- 修复：单笔落纸的增量渲染与整层重绘不一致（增量路径少了笔尾端帽）
+- 修复：橡皮擦快速滑动时拐角擦不干净（同批采样点改为逐段链式擦除）
+- 修复：快速书写时笔画结尾被截断（抬笔位置现在也计入笔迹）
+- Docker 部署现在可以安装插件（kernels/backends 增加 docker）
+- package.zip 打包脚本跨平台（zip → bsdtar → PowerShell 依次回退）
+
 ## 0.2.4 (2026-10-01)
 
 - 新增：导出带手写的整篇笔记 PDF——导出对话框新增「导出 PDF（笔记 + 手写）」，

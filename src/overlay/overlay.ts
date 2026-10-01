@@ -249,8 +249,18 @@ export class DocOverlay {
         }
     }
 
+    /** contexts holding a clip pushed by prepareCtx — clip() intersects with
+     *  the existing region, so each call must pop the previous clip first */
+    private clippedCtxs = new WeakSet<CanvasRenderingContext2D>();
+
     private prepareCtx(ctx: CanvasRenderingContext2D, vp: Viewport, clip: BBox | null, clear = true) {
         const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+        if (this.clippedCtxs.has(ctx)) {
+            ctx.restore();
+            this.clippedCtxs.delete(ctx);
+        }
+        ctx.save();
+        this.clippedCtxs.add(ctx);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         if (clear) ctx.clearRect(0, 0, vp.width, vp.height);
         if (clip) {
@@ -441,7 +451,9 @@ export class DocOverlay {
         if (!ctx) return;
         this.prepareCtx(ctx, vp, clip, false);
         const offsets = this.buildOffsets();
-        paintOne(ctx, stroke, this.renderer, vp, offsets(stroke));
+        // live=false: a committed stroke gets the final end cap and is cached,
+        // matching what a full redraw renders
+        paintOne(ctx, stroke, this.renderer, vp, offsets(stroke), false);
     }
 
     // ------------------------------------------------------------ data load
@@ -713,14 +725,7 @@ export class DocOverlay {
             }
             let pushed = false;
             for (const ev of samples) {
-                const p = this.toDoc(ev);
-                p.p = e.pointerType === "pen" ? Math.max(0.04, (ev as PointerEvent).pressure || 0.25) : 0.5;
-                const last = this.curPoints[this.curPoints.length - 1];
-                const d = Math.hypot(p.x - last.x, p.y - last.y);
-                if (d < 0.7 && this.curPoints.length > 1) continue;
-                this.curMoved = Math.max(this.curMoved, Math.hypot(p.x - this.curStart.x, p.y - this.curStart.y));
-                this.curPoints.push(p);
-                pushed = true;
+                if (this.pushSample(ev)) pushed = true;
             }
             // only real movement re-arms the shape timer — pen jitter must not
             // keep a resting stroke from ever snapping
@@ -730,10 +735,12 @@ export class DocOverlay {
             }
             this.redrawLive();
         } else if (this.erasing) {
-            const first = this.curPoints[this.curPoints.length - 1];
+            // chain segment-to-segment (one batch can carry many coalesced
+            // samples; fanning them from a fixed origin skipped corners)
             for (const ev of samples) {
                 const p = this.toDoc(ev);
-                this.eraseSegment(first.x, first.y, p.x, p.y);
+                const last = this.curPoints[this.curPoints.length - 1];
+                this.eraseSegment(last.x, last.y, p.x, p.y);
                 this.curPoints.push(p);
             }
             this.redrawLive();
@@ -749,6 +756,18 @@ export class DocOverlay {
             this.redrawLive();
         }
     };
+
+    /** append one input sample to the in-progress stroke; @returns true when it moved */
+    private pushSample(ev: PointerEvent): boolean {
+        const p = this.toDoc(ev);
+        p.p = ev.pointerType === "pen" ? Math.max(0.04, ev.pressure || 0.25) : 0.5;
+        const last = this.curPoints[this.curPoints.length - 1];
+        if (last && this.curPoints.length > 1 &&
+            Math.hypot(p.x - last.x, p.y - last.y) < 0.7) return false;
+        this.curMoved = Math.max(this.curMoved, Math.hypot(p.x - this.curStart.x, p.y - this.curStart.y));
+        this.curPoints.push(p);
+        return true;
+    }
 
     private onPointerUp = (e: PointerEvent) => {
         const pt = this.toDoc(e);
@@ -766,11 +785,20 @@ export class DocOverlay {
         }
 
         if (this.drawing) {
+            // the lift position is a real sample too — fast strokes otherwise
+            // end wherever the last move event happened to land
+            this.pushSample(e);
             this.finishStroke(pt);
         } else if (this.erasing) {
+            const isTap = this.curMoved < 7 && (Date.now() - this.curStart.t) < 160;
+            // real sweeps also erase up to the lift position; a tap must erase
+            // nothing — it may be the first half of the double-tap gesture
+            if (!isTap) {
+                const last = this.curPoints[this.curPoints.length - 1];
+                if (last) this.eraseSegment(last.x, last.y, pt.x, pt.y);
+            }
             // an eraser TAP also joins the double-tap gesture, so pencil
             // double-tap switches back from eraser to pen
-            const isTap = this.curMoved < 7 && (Date.now() - this.curStart.t) < 160;
             const gesture = isTap && !this.eraseHitSomething &&
                 this.activePointerType === "pen" && this.deps.settings.doubleTapToggle;
             if (gesture && this.tryTogglePair(pt)) {
@@ -885,6 +913,7 @@ export class DocOverlay {
     }
 
     private scheduleShapeCheck() {
+        if (!this.deps.settings.shapeSnap) return;
         if (this.shapeTimer !== null) window.clearTimeout(this.shapeTimer);
         this.shapeTimer = window.setTimeout(() => {
             this.shapeTimer = null;
@@ -894,6 +923,7 @@ export class DocOverlay {
 
     /** fired after the pen rests briefly mid-stroke: perfect the shape */
     private tryShapeSnap() {
+        if (!this.deps.settings.shapeSnap) return;
         if (!this.drawing || this.shapeSnap || this.erasing || this.selDrag) return;
         if (Date.now() - this.lastMoveAt < 460) {
             this.scheduleShapeCheck(); // still moving, re-arm

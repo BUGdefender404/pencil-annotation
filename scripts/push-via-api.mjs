@@ -78,18 +78,18 @@ const treeData = await api(`/repos/${OWNER}/${REPO}/git/trees`, {
 });
 console.log(`tree ${treeData.sha}`);
 
-// 3) commit
+// 3) commit — parented on the current remote head so history stays a single
+//    connected chain (parentless commits orphan the repo and break forks/PRs)
+const ref = await api(`/repos/${OWNER}/${REPO}/git/ref/heads/${BRANCH}`);
+const parents = ref ? [ref.object.sha] : [];
+const message = process.argv[2] || "Update pencil-annotation";
 const commitData = await api(`/repos/${OWNER}/${REPO}/git/commits`, {
     method: "POST",
-    body: JSON.stringify({
-        message: "Pencil Annotation v0.1.0: Apple Pencil handwriting annotation layer for SiYuan",
-        tree: treeData.sha,
-    }),
+    body: JSON.stringify({message, tree: treeData.sha, parents}),
 });
-console.log(`commit ${commitData.sha}`);
+console.log(`commit ${commitData.sha} (parent: ${parents[0] ?? "none"})`);
 
 // 4) point main at the commit (create or update)
-const ref = await api(`/repos/${OWNER}/${REPO}/git/ref/heads/${BRANCH}`);
 if (ref) {
     await api(`/repos/${OWNER}/${REPO}/git/refs/heads/${BRANCH}`, {
         method: "PATCH",

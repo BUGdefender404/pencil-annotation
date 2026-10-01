@@ -122,11 +122,12 @@ export const paintOne = (
     renderer: StrokeRenderer,
     viewport: Viewport,
     offset?: {dx: number; dy: number},
+    live = true,
 ) => {
     ctx.save();
     ctx.translate(-viewport.originX, -viewport.originY);
     if (offset) ctx.translate(offset.dx, offset.dy);
-    const {path} = renderer.getPath(stroke, true);
+    const {path} = renderer.getPath(stroke, live);
     ctx.globalAlpha = stroke.opacity;
     ctx.fillStyle = stroke.color;
     ctx.fill(path);
