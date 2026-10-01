@@ -46,5 +46,7 @@
   "eraser": "橡皮擦",
   "select": "选择",
   "settingPenWidthMax": "钢笔滑杆上限（px）",
-  "settingPenWidthMaxHint": "工具栏粗细滑杆的最大值，默认 20，可自行调大"
+  "settingPenWidthMaxHint": "工具栏粗细滑杆的最大值，默认 20，可自行调大",
+  "settingShapeSnap": "画完停顿自动变规则图形",
+  "settingShapeSnapHint": "画直线、矩形、三角形或椭圆后停顿约半秒，自动变规则图形（GoodNotes 风格）；停顿后再移动笔会恢复手绘"
 }

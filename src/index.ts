@@ -61,6 +61,7 @@ export default class PencilAnnotationPlugin extends Plugin {
         this.overlaySettings = {
             onlyStylus: this.settings.onlyStylus,
             doubleTapToggle: this.settings.doubleTapToggle,
+            shapeSnap: this.settings.shapeSnap,
             showEraserCursor: this.settings.showEraserCursor,
             eraserRadius: this.settings.eraserRadius,
             penWidthMax: this.settings.penWidthMax,
@@ -477,6 +478,11 @@ export default class PencilAnnotationPlugin extends Plugin {
             mkCheckbox(() => this.overlaySettings.doubleTapToggle, (v) => {
                 this.overlaySettings.doubleTapToggle = v;
                 this.settings.doubleTapToggle = v;
+            }));
+        row(this.t("settingShapeSnap"), this.t("settingShapeSnapHint"),
+            mkCheckbox(() => this.overlaySettings.shapeSnap, (v) => {
+                this.overlaySettings.shapeSnap = v;
+                this.settings.shapeSnap = v;
             }));
         row(this.t("settingShowEraserCursor"), undefined,
             mkCheckbox(() => this.overlaySettings.showEraserCursor, (v) => {

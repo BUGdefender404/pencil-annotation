@@ -3,6 +3,7 @@ import type {Plugin} from "siyuan";
 export interface PencilSettings {
     onlyStylus: boolean;
     doubleTapToggle: boolean;
+    shapeSnap: boolean;
     showEraserCursor: boolean;
     eraserRadius: number;
     penColor: string;
@@ -16,6 +17,7 @@ export interface PencilSettings {
 export const DEFAULT_SETTINGS: PencilSettings = {
     onlyStylus: true,
     doubleTapToggle: true,
+    shapeSnap: true,
     showEraserCursor: true,
     eraserRadius: 20,
     penColor: "#1e1e1e",

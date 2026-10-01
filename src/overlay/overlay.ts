@@ -5,6 +5,7 @@ import {
     type BBox,
 } from "../engine/geometry";
 import {paintOne, paintStrokes, StrokeRenderer, type OffsetFn, type Viewport} from "../engine/renderer";
+import {recognizeShape} from "../engine/shapes";
 import {DocStore} from "../engine/store";
 import type {PencilPayload, Point, Stroke, StrokeAnchor, ToolId} from "../engine/types";
 
@@ -21,6 +22,7 @@ export interface ProtyleLike {
 export interface OverlaySettings {
     onlyStylus: boolean;
     doubleTapToggle: boolean;
+    shapeSnap: boolean;
     showEraserCursor: boolean;
     eraserRadius: number;
     /** upper bound of the pen width slider (user adjustable in settings) */
@@ -102,6 +104,12 @@ export class DocOverlay {
     /** stroke id of a dot that already committed while waiting for its double-tap pair */
     private pendingDotCommitted: string | null = null;
     private lastPenTap = {t: 0, x: 0, y: 0};
+    /** GoodNotes-style shape snapping: pause mid-stroke and a line/rectangle/
+     *  triangle/ellipse straightens itself; moving the pen again reverts to freehand */
+    private shapeTimer: number | null = null;
+    private shapeSnap: Point[] | null = null;
+    private shapeSnapAt: {x: number; y: number} | null = null;
+    private lastMoveAt = 0;
 
     private constructor(protyle: ProtyleLike, deps: OverlayDeps) {
         this.protyle = protyle;
@@ -379,7 +387,7 @@ export class DocOverlay {
             paintOne(ctx, {
                 id: "live", tool, color: cfg.color, width: cfg.width,
                 opacity: cfg.opacity, simulate: this.activePointerType !== "pen",
-                points: this.curPoints, createdAt: 0,
+                points: this.shapeSnap ?? this.curPoints, createdAt: 0,
                 ...(this.curAnchor ? {anchor: this.curAnchor} : {}),
             }, this.renderer, vp, this.liveOffset());
         } else if (this.erasing && this.deps.settings.showEraserCursor && this.curPoints.length > 0) {
@@ -517,6 +525,7 @@ export class DocOverlay {
     destroy() {
         this.cancelActiveInput();
         this.stopPan();
+        this.clearShapeSnap();
         if (this.pendingDotTimer !== null) {
             window.clearTimeout(this.pendingDotTimer);
             this.pendingDotTimer = null;
@@ -663,6 +672,8 @@ export class DocOverlay {
             this.drawing = true;
             this.curAnchor = this.captureAnchor(e.clientX, e.clientY);
             this.curPoints = [pt];
+            this.lastMoveAt = Date.now();
+            this.clearShapeSnap();
             this.liveCanvas.style.mixBlendMode =
                 tool === "highlighter" ? "multiply" : "normal";
             this.redrawLive();
@@ -681,6 +692,15 @@ export class DocOverlay {
         const samples = events.length > 0 ? events : [e];
 
         if (this.drawing) {
+            if (this.shapeSnap && this.shapeSnapAt) {
+                // pen moved again after the snap → revert to freehand drawing
+                if (Math.hypot(pt.x - this.shapeSnapAt.x, pt.y - this.shapeSnapAt.y) > 6) {
+                    this.shapeSnap = null;
+                    this.shapeSnapAt = null;
+                } else {
+                    return; // stay snapped while the pen rests
+                }
+            }
             for (const ev of samples) {
                 const p = this.toDoc(ev);
                 p.p = e.pointerType === "pen" ? Math.max(0.04, (ev as PointerEvent).pressure || 0.25) : 0.5;
@@ -690,6 +710,8 @@ export class DocOverlay {
                 this.curMoved = Math.max(this.curMoved, Math.hypot(p.x - this.curStart.x, p.y - this.curStart.y));
                 this.curPoints.push(p);
             }
+            this.lastMoveAt = Date.now();
+            this.scheduleShapeCheck();
             this.redrawLive();
         } else if (this.erasing) {
             const first = this.curPoints[this.curPoints.length - 1];
@@ -760,6 +782,7 @@ export class DocOverlay {
         this.selDrag = null;
         this.curPoints = [];
         this.curAnchor = null;
+        this.clearShapeSnap();
     }
 
     // ------------------------------------------------------------ finger pan
@@ -819,6 +842,43 @@ export class DocOverlay {
         }
     }
 
+    // ---------------------------------------------------------- shape snapping
+
+    private clearShapeSnap() {
+        if (this.shapeTimer !== null) {
+            window.clearTimeout(this.shapeTimer);
+            this.shapeTimer = null;
+        }
+        this.shapeSnap = null;
+        this.shapeSnapAt = null;
+    }
+
+    private scheduleShapeCheck() {
+        if (this.shapeTimer !== null) window.clearTimeout(this.shapeTimer);
+        this.shapeTimer = window.setTimeout(() => {
+            this.shapeTimer = null;
+            this.tryShapeSnap();
+        }, 520);
+    }
+
+    /** fired after the pen rests briefly mid-stroke: perfect the shape */
+    private tryShapeSnap() {
+        if (!this.drawing || this.shapeSnap || this.erasing || this.selDrag) return;
+        if (Date.now() - this.lastMoveAt < 460) {
+            this.scheduleShapeCheck(); // still moving, re-arm
+            return;
+        }
+        const tool = this.deps.config.tool;
+        if (tool !== "pen" && tool !== "highlighter") return;
+        const snapped = recognizeShape(this.curPoints);
+        if (snapped) {
+            this.shapeSnap = snapped;
+            const lp = this.curPoints[this.curPoints.length - 1];
+            this.shapeSnapAt = {x: lp.x, y: lp.y};
+            this.redrawLive();
+        }
+    }
+
     private cancelActiveInput() {
         if (this.drawing || this.erasing || this.selDrag || this.curPoints.length > 0) {
             this.curPoints = [];
@@ -829,6 +889,7 @@ export class DocOverlay {
         this.drawing = false;
         this.erasing = false;
         this.curAnchor = null;
+        this.clearShapeSnap();
     }
 
     /** after a drag, re-anchor moved strokes to the block under their new position */
@@ -846,7 +907,7 @@ export class DocOverlay {
 
     private finishStroke(pt: Point) {
         const isDot = this.curPoints.length < 3 && this.curMoved < 5;
-        const points = this.curPoints;
+        const points = this.shapeSnap ?? this.curPoints;
 
         if (isDot && this.activePointerType === "pen" && this.deps.settings.doubleTapToggle) {
             const sinceLast = Date.now() - this.lastPenTap.t;

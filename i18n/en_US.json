@@ -46,5 +46,7 @@
   "eraser": "Eraser",
   "select": "Select",
   "settingPenWidthMax": "Pen slider max width (px)",
-  "settingPenWidthMaxHint": "Maximum of the width slider on the toolbar; default 20"
+  "settingPenWidthMaxHint": "Maximum of the width slider on the toolbar; default 20",
+  "settingShapeSnap": "Pause to perfect shapes",
+  "settingShapeSnapHint": "Pause briefly after drawing a line, rectangle, triangle or ellipse and it snaps to a perfect shape (GoodNotes-style); move again to keep drawing freehand"
 }
