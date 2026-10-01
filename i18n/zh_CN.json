@@ -55,5 +55,6 @@
   "exportPdfProgress": "正在生成第 {done}/{total} 页…",
   "exportPdfDone": "PDF 已导出",
   "exportInkSection": "笔迹图片",
+  "exportInkDesc": "把这篇文档的手写笔迹导出为 PNG 图片，可选白色或透明背景",
   "exportPdfSection": "PDF 文档"
 }

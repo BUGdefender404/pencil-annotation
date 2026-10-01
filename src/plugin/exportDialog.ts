@@ -12,36 +12,42 @@ export function exportStrokesDialog(overlay: DocOverlay, t: I18nFn) {
     const dialog = new Dialog({
         title: t("exportTitle"),
         content: `<div class="pa-export">
-            <div class="pa-export__section">
-                <div class="pa-export__head">${t("exportInkSection")}</div>
-                <div class="pa-export__opts">
-                    <label class="pa-export__opt">
-                        <input type="radio" name="pa-export-bg" value="white" checked>
-                        <span>${t("exportBgWhite")}</span>
-                    </label>
-                    <label class="pa-export__opt">
-                        <input type="radio" name="pa-export-bg" value="transparent">
-                        <span>${t("exportBgTransparent")}</span>
-                    </label>
+            <div class="b3-label config-item">
+                <div class="fn__block">
+                    <div class="config-name">${t("exportInkSection")}</div>
+                    <div class="b3-label__text">${t("exportInkDesc")}</div>
+                    <div class="fn__hr"></div>
+                    <div class="pa-export__radios">
+                        <label class="pa-export__radio">
+                            <input class="b3-radio" type="radio" name="pa-export-bg" value="white" checked>
+                            <span>${t("exportBgWhite")}</span>
+                        </label>
+                        <label class="pa-export__radio">
+                            <input class="b3-radio" type="radio" name="pa-export-bg" value="transparent">
+                            <span>${t("exportBgTransparent")}</span>
+                        </label>
+                    </div>
+                    <div class="pa-export__row">
+                        <button class="b3-button b3-button--outline" data-action="save"
+                            ${hasInk ? "" : "disabled"}><span>${t("exportSaveOnly")}</span></button>
+                        <button class="b3-button b3-button--outline" data-action="insert"
+                            ${hasInk ? "" : "disabled"}><span>${t("exportInsert")}</span></button>
+                    </div>
+                    ${hasInk ? "" : `<div class="pa-export__note b3-label__text">${t("exportNone")}</div>`}
                 </div>
-                <div class="pa-export__row">
-                    <button class="b3-button b3-button--outline" data-action="save"
-                        ${hasInk ? "" : "disabled"}><span>${t("exportSaveOnly")}</span></button>
-                    <button class="b3-button b3-button--text" data-action="insert"
-                        ${hasInk ? "" : "disabled"}><span>${t("exportInsert")}</span></button>
-                </div>
-                ${hasInk ? "" : `<div class="pa-export__note">${t("exportNone")}</div>`}
             </div>
-            <div class="pa-export__divider"></div>
-            <div class="pa-export__section">
-                <div class="pa-export__head">${t("exportPdfSection")}</div>
-                <button class="b3-button b3-button--text pa-export__pdf" data-action="pdf">
-                    <span>${t("exportPdf")}</span>
-                </button>
-                <div class="pa-export__hint">${t("exportPdfHint")}</div>
+            <div class="b3-label config-item">
+                <div class="fn__block">
+                    <div class="config-name">${t("exportPdfSection")}</div>
+                    <div class="b3-label__text">${t("exportPdfHint")}</div>
+                    <div class="fn__hr"></div>
+                    <button class="b3-button pa-export__pdf" data-action="pdf">
+                        <span>${t("exportPdf")}</span>
+                    </button>
+                </div>
             </div>
         </div>`,
-        width: "460px",
+        width: "520px",
     });
 
     const el = dialog.element;

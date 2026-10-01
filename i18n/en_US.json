@@ -55,5 +55,6 @@
   "exportPdfProgress": "Generating page {done}/{total}…",
   "exportPdfDone": "PDF exported",
   "exportInkSection": "Ink image",
+  "exportInkDesc": "Export this document's handwriting as a PNG image with a white or transparent background",
   "exportPdfSection": "PDF document"
 }
