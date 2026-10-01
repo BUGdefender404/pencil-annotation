@@ -197,7 +197,12 @@ export class Palette {
                 const offX = e.clientX - rect.left;
                 const offY = e.clientY - rect.top;
                 let moved = false;
+                const startX = e.clientX;
+                const startY = e.clientY;
                 const move = (ev: PointerEvent) => {
+                    // sub-threshold drift (Apple Pencil taps jitter ~1-2px) is
+                    // a tap, not a drag — otherwise the ball never activates
+                    if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
                     moved = true;
                     if (el === this.toolbar) {
                         this.applyDockDrag(ev.clientX - offX, ev.clientY - offY, ev.clientX, ev.clientY);

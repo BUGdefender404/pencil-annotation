@@ -90,10 +90,17 @@ export class DocOverlay {
 
     // gestures: track active touch pointers for palm rejection only
     private touchPointers = new Set<number>();
+    /** finger panning of the document (GoodNotes-style: pen writes, finger pans) —
+     *  the capture layer lives outside .protyle-content, so native touch-action
+     *  scrolling can never reach the real scroller and we translate it by hand */
+    private pan: {id: number; lastX: number; lastY: number; vy: number; lastT: number} | null = null;
+    private panMomentum: number | null = null;
     private pendingDotTimer: number | null = null;
     /** dot held during double-tap detection, together with its anchor — finishPointer
      *  clears curAnchor before the delayed commit runs, so it must travel along */
     private pendingDot: {points: Point[]; anchor: StrokeAnchor | null} | null = null;
+    /** stroke id of a dot that already committed while waiting for its double-tap pair */
+    private pendingDotCommitted: string | null = null;
     private lastPenTap = {t: 0, x: 0, y: 0};
 
     private constructor(protyle: ProtyleLike, deps: OverlayDeps) {
@@ -509,6 +516,7 @@ export class DocOverlay {
 
     destroy() {
         this.cancelActiveInput();
+        this.stopPan();
         if (this.pendingDotTimer !== null) {
             window.clearTimeout(this.pendingDotTimer);
             this.pendingDotTimer = null;
@@ -599,20 +607,27 @@ export class DocOverlay {
         const pt = this.toDoc(e);
 
         if (e.pointerType === "touch") {
-            // touch is used for native scrolling (via touch-action) and only
-            // draws when onlyStylus is disabled; a second touch always
-            // cancels the in-progress input (palm rejection)
             this.touchPointers.add(e.pointerId);
-            if (this.deps.settings.onlyStylus || this.activePointerId !== null || this.touchPointers.size >= 2) {
+            const penWasDrawing = this.activePointerId !== null;
+            if (this.deps.settings.onlyStylus || penWasDrawing || this.touchPointers.size >= 2) {
+                if (this.touchPointers.size >= 2) this.stopPan(); // second finger kills the pan
                 this.cancelActiveInput();
+                // GoodNotes-style: with onlyStylus a lone finger pans the page —
+                // but a touch that landed while the pen was writing is a palm
+                if (this.deps.settings.onlyStylus && this.touchPointers.size === 1 && !this.pan && !penWasDrawing) {
+                    this.startPan(e);
+                }
                 return;
             }
         } else if (this.activePointerId !== null) {
             return; // already drawing with another pointer
         }
 
-        // pen or mouse (or touch with onlyStylus off)
-        if (e.pointerType !== "touch") e.preventDefault();
+        // pen or mouse (or touch with onlyStylus off) takes over from a finger pan
+        if (e.pointerType !== "touch") {
+            this.stopPan();
+            e.preventDefault();
+        }
         this.activePointerId = e.pointerId;
         this.activePointerType = e.pointerType;
         try {
@@ -656,6 +671,7 @@ export class DocOverlay {
 
     private onPointerMove = (e: PointerEvent) => {
         if (e.pointerType === "touch" && !this.touchPointers.has(e.pointerId)) return;
+        if (this.pan && this.movePan(e)) return;
         if (e.pointerId !== this.activePointerId) return;
         if (!this.drawing && !this.erasing && !this.selDrag) return;
 
@@ -701,6 +717,10 @@ export class DocOverlay {
 
         if (e.pointerType === "touch") {
             this.touchPointers.delete(e.pointerId);
+            if (this.pan && e.pointerId === this.pan.id) {
+                this.endPan(e, true);
+                return;
+            }
             // a touch that isn't the active drawing pointer is scroll/palm input
             if (this.activePointerId !== e.pointerId) return;
         } else if (e.pointerId !== this.activePointerId) {
@@ -723,7 +743,10 @@ export class DocOverlay {
     };
 
     private onPointerCancel = (e: PointerEvent) => {
-        if (e.pointerType === "touch") this.touchPointers.delete(e.pointerId);
+        if (e.pointerType === "touch") {
+            this.touchPointers.delete(e.pointerId);
+            if (this.pan && e.pointerId === this.pan.id) this.stopPan();
+        }
         if (e.pointerId === this.activePointerId) {
             this.cancelActiveInput();
         }
@@ -737,6 +760,63 @@ export class DocOverlay {
         this.selDrag = null;
         this.curPoints = [];
         this.curAnchor = null;
+    }
+
+    // ------------------------------------------------------------ finger pan
+
+    private startPan(e: PointerEvent) {
+        this.stopPan();
+        this.pan = {id: e.pointerId, lastX: e.clientX, lastY: e.clientY, vy: 0, lastT: Date.now()};
+        try {
+            this.capture.setPointerCapture(e.pointerId);
+        } catch { /* iOS may refuse */ }
+    }
+
+    /** @returns true if this pointer is the panning finger and the move was consumed */
+    private movePan(e: PointerEvent): boolean {
+        if (!this.pan || e.pointerId !== this.pan.id) return false;
+        const dy = e.clientY - this.pan.lastY;
+        this.pan.lastY = e.clientY;
+        const now = Date.now();
+        const dt = Math.max(1, now - this.pan.lastT);
+        this.pan.lastT = now;
+        this.pan.vy = 0.75 * (dy / dt) + 0.25 * this.pan.vy; // px/ms, + = finger moving down
+        const sc = this.scrollEl || this.contentEl;
+        if (sc && dy !== 0) sc.scrollTop -= dy;
+        return true;
+    }
+
+    /** end a pan; with momentum the release velocity carries the scroll and decays */
+    private endPan(e: PointerEvent, withMomentum: boolean) {
+        if (!this.pan || e.pointerId !== this.pan.id) return;
+        const vy = this.pan.vy;
+        this.pan = null;
+        this.stopPanMomentum();
+        const sc = this.scrollEl || this.contentEl;
+        if (!withMomentum || !sc || Math.abs(vy) < 0.08) return;
+        let v = vy;
+        let last = performance.now();
+        const step = (now: number) => {
+            const dt = Math.max(1, now - last);
+            last = now;
+            sc.scrollTop -= v * dt;
+            v *= Math.pow(0.94, dt / 16); // ~6% decay per frame
+            if (Math.abs(v) > 0.02) this.panMomentum = requestAnimationFrame(step);
+            else this.panMomentum = null;
+        };
+        this.panMomentum = requestAnimationFrame(step);
+    }
+
+    private stopPan() {
+        this.pan = null;
+        this.stopPanMomentum();
+    }
+
+    private stopPanMomentum() {
+        if (this.panMomentum !== null) {
+            cancelAnimationFrame(this.panMomentum);
+            this.panMomentum = null;
+        }
     }
 
     private cancelActiveInput() {
@@ -771,22 +851,35 @@ export class DocOverlay {
         if (isDot && this.activePointerType === "pen" && this.deps.settings.doubleTapToggle) {
             const sinceLast = Date.now() - this.lastPenTap.t;
             const nearLast = Math.hypot(pt.x - this.lastPenTap.x, pt.y - this.lastPenTap.y) < 28;
-            if (this.pendingDotTimer !== null && sinceLast < 420 && nearLast) {
-                // second tap of a pencil double-tap → tool toggle, no dots
-                window.clearTimeout(this.pendingDotTimer);
-                this.pendingDotTimer = null;
-                this.pendingDot = null;
+            if (sinceLast < 420 && nearLast) {
+                // second tap of a pencil double-tap → tool toggle, no dots left behind
+                if (this.pendingDotTimer !== null) {
+                    window.clearTimeout(this.pendingDotTimer);
+                    this.pendingDotTimer = null;
+                    this.pendingDot = null;
+                } else if (this.pendingDotCommitted) {
+                    // the first dot already committed (tap landed in the 300-420ms
+                    // gap) — remove it so the pair leaves no trace
+                    const dotId = this.pendingDotCommitted;
+                    this.store.eraseWhere((s) => s.id === dotId);
+                    this.renderer.forget(dotId);
+                    this.scheduleRedraw();
+                    this.changed();
+                    this.pendingDotCommitted = null;
+                }
                 this.lastPenTap = {t: 0, x: 0, y: 0};
                 this.redrawLive();
                 this.deps.onDoubleTapToggle();
                 return;
             }
             // hold the dot briefly in case a double-tap follows
+            this.pendingDotCommitted = null;
             this.pendingDot = {points, anchor: this.curAnchor};
             this.pendingDotTimer = window.setTimeout(() => {
                 this.pendingDotTimer = null;
                 if (this.pendingDot) {
-                    this.commitStroke(this.pendingDot.points, this.pendingDot.anchor);
+                    const committed = this.commitStroke(this.pendingDot.points, this.pendingDot.anchor);
+                    this.pendingDotCommitted = committed ? committed.id : null;
                     this.pendingDot = null;
                 }
             }, 300);
@@ -795,6 +888,7 @@ export class DocOverlay {
             return;
         }
 
+        this.pendingDotCommitted = null;
         this.commitStroke(points);
     }
 
@@ -813,8 +907,8 @@ export class DocOverlay {
         };
     }
 
-    private commitStroke(points: Point[], anchor?: StrokeAnchor | null) {
-        if (points.length === 0) return;
+    private commitStroke(points: Point[], anchor?: StrokeAnchor | null): Stroke | null {
+        if (points.length === 0) return null;
         const cfg = this.deps.config;
         const tool = cfg.tool as "pen" | "highlighter";
         const stroke = tool === "pen"
@@ -827,6 +921,7 @@ export class DocOverlay {
         this.redrawLive();
         this.paintCommitted(committed);
         this.changed();
+        return committed;
     }
 
     private eraseSegment(x1: number, y1: number, x2: number, y2: number) {
