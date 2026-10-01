@@ -48,5 +48,12 @@
   "settingPenWidthMax": "Pen slider max width (px)",
   "settingPenWidthMaxHint": "Maximum of the width slider on the toolbar; default 20",
   "settingShapeSnap": "Pause to perfect shapes",
-  "settingShapeSnapHint": "Pause briefly after drawing a line, rectangle, triangle or ellipse and it snaps to a perfect shape (GoodNotes-style); move again to keep drawing freehand"
+  "settingShapeSnapHint": "Pause briefly after drawing a line, rectangle, triangle or ellipse and it snaps to a perfect shape (GoodNotes-style); move again to keep drawing freehand",
+  "exportPdf": "Export PDF (note + ink)",
+  "exportPdfHint": "Merges the whole note with the handwriting layer into a paged PDF (A4 ratio)",
+  "exportPdfPreparing": "Rendering document… {done}/{total}",
+  "exportPdfProgress": "Generating page {done}/{total}…",
+  "exportPdfDone": "PDF exported",
+  "exportInkSection": "Ink image",
+  "exportPdfSection": "PDF document"
 }

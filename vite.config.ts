@@ -15,6 +15,9 @@ export default defineConfig({
         },
         rollupOptions: {
             external: ["siyuan"],
+            // jspdf pulls optional deps via dynamic import — keep everything
+            // in the single index.js the SiYuan plugin loader expects
+            output: {inlineDynamicImports: true},
         },
         sourcemap: process.env.NODE_ENV === "development",
     },

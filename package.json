@@ -1,6 +1,6 @@
 {
   "name": "pencil-annotation",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Apple Pencil handwriting / annotation layer for SiYuan documents",
   "type": "module",
   "scripts": {
@@ -25,6 +25,8 @@
     "vite": "^5.4.0"
   },
   "dependencies": {
+    "jspdf": "^4.2.1",
+    "modern-screenshot": "^4.7.0",
     "perfect-freehand": "^1.2.2",
     "siyuan": "^1.0.8"
   }

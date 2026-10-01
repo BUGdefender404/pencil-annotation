@@ -2,32 +2,46 @@ import {Dialog, showMessage} from "siyuan";
 import type {DocOverlay} from "../overlay/overlay";
 import {appendBlockMarkdown, uploadAssetPng} from "./api";
 import {strokesToPngBlob} from "./exportImage";
+import {exportNotePdf, PdfSaveCancelled} from "./exportPdf";
 
 type I18nFn = (key: string, vars?: Record<string, string>) => string;
 
 export function exportStrokesDialog(overlay: DocOverlay, t: I18nFn) {
-    if (overlay.store.strokes.length === 0) {
-        showMessage(t("exportNone"));
-        return;
-    }
+    const hasInk = overlay.store.strokes.length > 0;
 
     const dialog = new Dialog({
         title: t("exportTitle"),
         content: `<div class="pa-export">
-            <label class="pa-export__opt">
-                <input type="radio" name="pa-export-bg" value="white" checked>
-                <span>${t("exportBgWhite")}</span>
-            </label>
-            <label class="pa-export__opt">
-                <input type="radio" name="pa-export-bg" value="transparent">
-                <span>${t("exportBgTransparent")}</span>
-            </label>
-            <div class="pa-export__actions">
-                <button class="b3-button b3-button--outline" data-action="save">${t("exportSaveOnly")}</button>
-                <button class="b3-button b3-button--text" data-action="insert">${t("exportInsert")}</button>
+            <div class="pa-export__section">
+                <div class="pa-export__head">${t("exportInkSection")}</div>
+                <div class="pa-export__opts">
+                    <label class="pa-export__opt">
+                        <input type="radio" name="pa-export-bg" value="white" checked>
+                        <span>${t("exportBgWhite")}</span>
+                    </label>
+                    <label class="pa-export__opt">
+                        <input type="radio" name="pa-export-bg" value="transparent">
+                        <span>${t("exportBgTransparent")}</span>
+                    </label>
+                </div>
+                <div class="pa-export__row">
+                    <button class="b3-button b3-button--outline" data-action="save"
+                        ${hasInk ? "" : "disabled"}><span>${t("exportSaveOnly")}</span></button>
+                    <button class="b3-button b3-button--text" data-action="insert"
+                        ${hasInk ? "" : "disabled"}><span>${t("exportInsert")}</span></button>
+                </div>
+                ${hasInk ? "" : `<div class="pa-export__note">${t("exportNone")}</div>`}
+            </div>
+            <div class="pa-export__divider"></div>
+            <div class="pa-export__section">
+                <div class="pa-export__head">${t("exportPdfSection")}</div>
+                <button class="b3-button b3-button--text pa-export__pdf" data-action="pdf">
+                    <span>${t("exportPdf")}</span>
+                </button>
+                <div class="pa-export__hint">${t("exportPdfHint")}</div>
             </div>
         </div>`,
-        width: "420px",
+        width: "460px",
     });
 
     const el = dialog.element;
@@ -35,9 +49,13 @@ export function exportStrokesDialog(overlay: DocOverlay, t: I18nFn) {
         el.querySelector<HTMLInputElement>('input[name="pa-export-bg"]:checked')?.value === "transparent"
             ? "transparent" : "white";
 
+    const busy = (on: boolean) => {
+        el.querySelectorAll<HTMLButtonElement>(".pa-export button[data-action]")
+            .forEach((b) => (b.disabled = on || (b.dataset.action !== "pdf" && !hasInk)));
+    };
+
     const run = async (insert: boolean) => {
-        const buttons = el.querySelectorAll<HTMLButtonElement>(".pa-export__actions button");
-        buttons.forEach((b) => (b.disabled = true));
+        busy(true);
         try {
             const blob = await strokesToPngBlob(overlay.store, bg(), overlay.strokeOffsets());
             const fileName = `pencil-${overlay.docId}-${Date.now()}.png`;
@@ -51,7 +69,34 @@ export function exportStrokesDialog(overlay: DocOverlay, t: I18nFn) {
         } catch (e) {
             console.error("[pencil-annotation] export failed", e);
             showMessage(t("exportFailed", {msg: String((e as Error).message || e)}), undefined, "error");
-            buttons.forEach((b) => (b.disabled = false));
+            busy(false);
+        }
+    };
+
+    const runPdf = async () => {
+        const btn = el.querySelector<HTMLButtonElement>('[data-action="pdf"]');
+        const label = btn?.textContent ?? "";
+        busy(true);
+        try {
+            await exportNotePdf(overlay, (stage, done, total) => {
+                if (btn) {
+                    btn.textContent = stage === "prepare"
+                        ? t("exportPdfPreparing", {done: String(done), total: String(total)})
+                        : t("exportPdfProgress", {done: String(done), total: String(total)});
+                }
+            });
+            showMessage(t("exportPdfDone"));
+            dialog.destroy();
+        } catch (e) {
+            if (e instanceof PdfSaveCancelled) {
+                if (btn) btn.textContent = label;
+                busy(false);
+                return;
+            }
+            console.error("[pencil-annotation] pdf export failed", e);
+            showMessage(t("exportFailed", {msg: String((e as Error).message || e)}), undefined, "error");
+            if (btn) btn.textContent = label;
+            busy(false);
         }
     };
 
@@ -59,4 +104,6 @@ export function exportStrokesDialog(overlay: DocOverlay, t: I18nFn) {
         ?.addEventListener("click", () => void run(false));
     el.querySelector<HTMLButtonElement>('[data-action="insert"]')
         ?.addEventListener("click", () => void run(true));
+    el.querySelector<HTMLButtonElement>('[data-action="pdf"]')
+        ?.addEventListener("click", () => void runPdf());
 }

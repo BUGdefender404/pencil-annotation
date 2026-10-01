@@ -48,5 +48,12 @@
   "settingPenWidthMax": "钢笔滑杆上限（px）",
   "settingPenWidthMaxHint": "工具栏粗细滑杆的最大值，默认 20，可自行调大",
   "settingShapeSnap": "画完停顿自动变规则图形",
-  "settingShapeSnapHint": "画直线、矩形、三角形或椭圆后停顿约半秒，自动变规则图形（GoodNotes 风格）；停顿后再移动笔会恢复手绘"
+  "settingShapeSnapHint": "画直线、矩形、三角形或椭圆后停顿约半秒，自动变规则图形（GoodNotes 风格）；停顿后再移动笔会恢复手绘",
+  "exportPdf": "导出 PDF（笔记 + 手写）",
+  "exportPdfHint": "把整篇笔记和手写图层合并输出为 PDF，按 A4 比例分页",
+  "exportPdfPreparing": "正在渲染文档… {done}/{total}",
+  "exportPdfProgress": "正在生成第 {done}/{total} 页…",
+  "exportPdfDone": "PDF 已导出",
+  "exportInkSection": "笔迹图片",
+  "exportPdfSection": "PDF 文档"
 }

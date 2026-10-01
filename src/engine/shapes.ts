@@ -34,27 +34,228 @@ const rdpIdx = (pts: Point[], eps: number): number[] => {
     return out;
 };
 
-/** max deviation of raw[i0..i1] from the chord — decides if an edge is "straight" */
-const edgeBulge = (raw: Point[], i0: number, i1: number) => {
-    const a = raw[i0], b = raw[i1];
-    const chord = dist(a, b) || 1;
-    let maxDev = 0;
-    for (let k = i0; k <= i1; k++) maxDev = Math.max(maxDev, segDist(raw[k], a, b));
-    return maxDev / chord;
+const avgPressure = (pts: Point[]) => pts.reduce((s, p) => s + p.p, 0) / Math.max(1, pts.length);
+
+/** interior angle at point b between the segments a-b and b-c, in degrees */
+const interiorAngle = (a: Point, b: Point, c: Point) => {
+    const v1x = a.x - b.x, v1y = a.y - b.y, v2x = c.x - b.x, v2y = c.y - b.y;
+    const denom = Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y) || 1;
+    const cos = (v1x * v2x + v1y * v2y) / denom;
+    return Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
 };
 
-const avgPressure = (pts: Point[]) => pts.reduce((s, p) => s + p.p, 0) / Math.max(1, pts.length);
+const polygonArea = (pts: Point[]) => {
+    let a = 0;
+    for (let i = 0; i < pts.length; i++) {
+        const p = pts[i], q = pts[(i + 1) % pts.length];
+        a += p.x * q.y - q.x * p.y;
+    }
+    return Math.abs(a) / 2;
+};
+
+/**
+ * A genuine shape stroke winds around its centroid exactly once. The winding
+ * of the POSITION vector is immune to out-and-back spikes (they never advance
+ * the angle) while double loops wind twice and back-and-forth doodles net
+ * roughly zero — all rejected before any candidate fit is attempted.
+ */
+const windsOnce = (pts: Point[], cx: number, cy: number) => {
+    let sum = 0;
+    let prev: number | null = null;
+    for (const p of pts) {
+        const ang = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI;
+        if (prev !== null) {
+            let d = ang - prev;
+            d = ((d % 360) + 540) % 360 - 180;
+            sum += d;
+        }
+        prev = ang;
+    }
+    return Math.abs(sum) >= 300 && Math.abs(sum) <= 460;
+};
 
 /** near-horizontal / near-vertical lines snap to the axis within this many degrees */
 export const AXIS_SNAP_DEG = 8;
+/** a candidate wins only when it hugs the stroke this closely (× diag) */
+const SNAP_RESIDUAL = 0.055;
+
+/**
+ * mean distance from the raw points to the nearest edge of a closed polygon
+ * (poly is given closed: last point === first point)
+ */
+const polyResidual = (raw: Point[], poly: Point[]) => {
+    let sum = 0;
+    for (const pt of raw) {
+        let best = Infinity;
+        for (let i = 0; i + 1 < poly.length; i++) {
+            const d = segDist(pt, poly[i], poly[i + 1]);
+            if (d < best) best = d;
+        }
+        sum += best;
+    }
+    return sum / Math.max(1, raw.length);
+};
+
+/** rectangle spanning the points, axis-aligned in the frame rotated by deg */
+const rectCandidate = (
+    raw: Point[],
+    deg: number,
+    cx: number,
+    cy: number,
+    p: number,
+): Point[] => {
+    const th = deg * Math.PI / 180;
+    const c = Math.cos(th), s = Math.sin(th);
+    let rminX = Infinity, rminY = Infinity, rmaxX = -Infinity, rmaxY = -Infinity;
+    for (const pt of raw) {
+        const dx = pt.x - cx, dy = pt.y - cy;
+        const rx = dx * c + dy * s;
+        const ry = -dx * s + dy * c;
+        if (rx < rminX) rminX = rx;
+        if (rx > rmaxX) rmaxX = rx;
+        if (ry < rminY) rminY = ry;
+        if (ry > rmaxY) rmaxY = ry;
+    }
+    const corner = (rx: number, ry: number): Point => ({
+        x: cx + rx * c - ry * s,
+        y: cy + rx * s + ry * c,
+        p,
+    });
+    return [
+        corner(rminX, rminY), corner(rmaxX, rminY),
+        corner(rmaxX, rmaxY), corner(rminX, rmaxY),
+        corner(rminX, rminY),
+    ];
+};
+
+const ellipseCandidate = (minX: number, minY: number, maxX: number, maxY: number, p: number): Point[] => {
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const rx = (maxX - minX) / 2, ry = (maxY - minY) / 2;
+    const out: Point[] = [];
+    for (let i = 0; i <= 72; i++) {
+        const t = (i / 72) * Math.PI * 2;
+        out.push({x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t), p});
+    }
+    return out;
+};
+
+const ellipseResidual = (raw: Point[], minX: number, minY: number, maxX: number, maxY: number) => {
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const rx = (maxX - minX) / 2 || 1, ry = (maxY - minY) / 2 || 1;
+    const unit = Math.min(rx, ry);
+    let sum = 0;
+    for (const pt of raw) {
+        const r = Math.hypot((pt.x - cx) / rx, (pt.y - cy) / ry);
+        sum += Math.abs(r - 1) * unit;
+    }
+    return sum / Math.max(1, raw.length);
+};
+
+/**
+ * dominant corners of the closed loop: RDP rooted at the point farthest from
+ * the centroid (the raw start can be mid-edge, and RDP always keeps the
+ * endpoints, which would fake a corner there), then the shallowest extra
+ * kinks are dropped while there are more than six candidates left
+ */
+const dominantCorners = (raw: Point[], minX: number, minY: number, maxX: number, maxY: number): Point[] => {
+    let startIdx = 0, far = -1;
+    const icx = (minX + maxX) / 2, icy = (minY + maxY) / 2;
+    for (let i = 0; i < raw.length; i++) {
+        const d = (raw[i].x - icx) * (raw[i].x - icx) + (raw[i].y - icy) * (raw[i].y - icy);
+        if (d > far) { far = d; startIdx = i; }
+    }
+    const loop = raw.slice(startIdx).concat(raw.slice(0, startIdx + 1));
+    const diag = Math.hypot(maxX - minX, maxY - minY);
+    const idx0 = rdpIdx(loop, Math.max(6, diag * 0.04));
+    const corners = idx0.map(i => loop[i]);
+    if (corners.length > 1 && dist(corners[0], corners[corners.length - 1]) < diag * 0.08) {
+        corners.pop();
+    }
+    while (corners.length > 6) {
+        let flat = -1, flatAng = -1;
+        for (let i = 0; i < corners.length; i++) {
+            const ang = interiorAngle(
+                corners[(i + corners.length - 1) % corners.length],
+                corners[i],
+                corners[(i + 1) % corners.length],
+            );
+            if (ang > flatAng) { flatAng = ang; flat = i; }
+        }
+        if (flatAng < 155) break;
+        corners.splice(flat, 1);
+    }
+    return corners;
+};
 
 /**
  * GoodNotes-style shape recognition: given a freehand stroke, return the
- * "perfected" replacement points — a straight line, an axis-aligned rectangle,
+ * "perfected" replacement points — a straight line, a rectangle (any tilt),
  * a triangle or an ellipse — or null when the stroke doesn't resemble a shape.
+ *
+ * Closed shapes are classified by FIT, not by corner-count rules: rectangle /
+ * triangle / ellipse candidates compete on how closely they hug the drawn
+ * points, so a sloppy rectangle can never be stolen by the ellipse fallback
+ * and a kinked triangle can never turn into a rectangle.
  */
-export const recognizeShape = (raw: Point[]): Point[] | null => {
-    if (raw.length < 6) return null;
+export const recognizeShape = (input: Point[]): Point[] | null => {
+    if (input.length < 6) return null;
+    // Quick closures often overshoot the start point; the spike would bias
+    // every fit. Trim the tail where the path comes nearest to the start
+    // again, and judge closedness by that nearest approach.
+    let endIdx = input.length - 1;
+    let nearest = Infinity;
+    const tailFrom = Math.floor(input.length * 0.7);
+    for (let i = tailFrom; i < input.length; i++) {
+        const d = dist(input[i], input[0]);
+        if (d < nearest) { nearest = d; endIdx = i; }
+    }
+    const raw = input.slice(0, endIdx + 1);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of raw) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    }
+    const diag = Math.hypot(maxX - minX, maxY - minY);
+    if (diag < 40) return null;
+    const p = avgPressure(raw);
+    const closed = nearest <= Math.max(28, diag * 0.3);
+
+    if (!closed) {
+        const first = raw[0], last = raw[raw.length - 1];
+        // straight line: nearly every point lies on the start-end segment
+        const len = dist(first, last);
+        if (len >= diag * 0.75) { // else it doubles back — not a line
+            let maxDev = 0;
+            for (const pt of raw) maxDev = Math.max(maxDev, segDist(pt, first, last));
+            if (maxDev <= Math.max(10, len * 0.08)) {
+                let ax = first.x, ay = first.y, bx = last.x, by = last.y;
+                const ang = Math.atan2(last.y - first.y, last.x - first.x) * 180 / Math.PI;
+                if (Math.abs(ang) <= AXIS_SNAP_DEG || Math.abs(Math.abs(ang) - 180) <= AXIS_SNAP_DEG) {
+                    ay = by = (first.y + last.y) / 2;
+                } else if (Math.abs(Math.abs(ang) - 90) <= AXIS_SNAP_DEG) {
+                    ax = bx = (first.x + last.x) / 2;
+                }
+                return [{x: ax, y: ay, p}, {x: bx, y: by, p}];
+            }
+        }
+        // an outline with only the closing side missing (three sides of a
+        // rectangle, say) closes itself into the shape
+        if (nearest <= Math.max(45, diag * 0.5)) {
+            return loopShape(raw.concat([{x: first.x, y: first.y, p: first.p}]), true);
+        }
+        return null;
+    }
+    return loopShape(raw, false);
+};
+
+/**
+ * Closed-shape pipeline: every candidate shape competes on fit residual and
+ * the winner must hug the stroke closely enough. With `rectOnly` (open
+ * strokes relying on an implicit closing side) only rectangles are offered.
+ */
+const loopShape = (raw: Point[], rectOnly: boolean): Point[] | null => {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of raw) {
         if (p.x < minX) minX = p.x;
@@ -64,74 +265,53 @@ export const recognizeShape = (raw: Point[]): Point[] | null => {
     }
     const w = maxX - minX, h = maxY - minY;
     const diag = Math.hypot(w, h);
-    if (diag < 40) return null;
-    const first = raw[0], last = raw[raw.length - 1];
-    const gap = dist(first, last);
-    const closed = gap <= Math.max(28, diag * 0.3);
     const p = avgPressure(raw);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
 
-    if (!closed) {
-        // straight line: nearly every point lies on the start-end segment
-        const len = dist(first, last);
-        if (len < diag * 0.75) return null; // doubles back — not a line
-        let maxDev = 0;
-        for (const pt of raw) maxDev = Math.max(maxDev, segDist(pt, first, last));
-        if (maxDev > Math.max(10, len * 0.08)) return null;
-        let ax = first.x, ay = first.y, bx = last.x, by = last.y;
-        const ang = Math.atan2(last.y - first.y, last.x - first.x) * 180 / Math.PI;
-        if (Math.abs(ang) <= AXIS_SNAP_DEG || Math.abs(Math.abs(ang) - 180) <= AXIS_SNAP_DEG) {
-            ay = by = (first.y + last.y) / 2;
-        } else if (Math.abs(Math.abs(ang) - 90) <= AXIS_SNAP_DEG) {
-            ax = bx = (first.x + last.x) / 2;
+    // scribbles and dented doodles are not shapes at all — leave them alone
+    if (!windsOnce(raw, cx, cy)) return null;
+
+    let best: {score: number; pts: Point[]} | null = null;
+    const offer = (res: number, pts: Point[], pref: number) => {
+        const score = res * pref;
+        if (!best || score < best.score) best = {score, pts};
+    };
+
+    // rectangle: scan orientations, keep the best-fitting one
+    {
+        let bRes = Infinity, bPts: Point[] | null = null;
+        for (let deg = 0; deg < 90; deg += 3) {
+            const pts = rectCandidate(raw, deg, cx, cy, p);
+            const res = polyResidual(raw, pts);
+            if (res < bRes) { bRes = res; bPts = pts; }
         }
-        return [{x: ax, y: ay, p}, {x: bx, y: by, p}];
-    }
-
-    // closed shapes: count dominant corners
-    const idx = rdpIdx(raw, Math.max(6, diag * 0.04));
-    const corners = idx.map(i => raw[i]);
-    if (corners.length > 1 && dist(corners[0], corners[corners.length - 1]) < diag * 0.08) {
-        corners.pop();
-        idx.pop();
+        if (bPts) offer(bRes, bPts, 0.95);
     }
 
-    if (corners.length === 4) {
-        const rightAngles = [0, 1, 2, 3].every(i => {
-            const a = corners[i], b = corners[(i + 1) % 4], c = corners[(i + 2) % 4];
-            const v1x = a.x - b.x, v1y = a.y - b.y, v2x = c.x - b.x, v2y = c.y - b.y;
-            const denom = Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y) || 1;
-            const cos = (v1x * v2x + v1y * v2y) / denom;
-            const ang = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
-            return Math.abs(ang - 90) <= 30;
-        });
-        // all four sides must hug their chords, else it's an ellipse-ish blob
-        const edgesStraight = rightAngles && [0, 1, 2, 3].every(i => {
-            const s = idx[i], e = i === 3 ? raw.length - 1 : idx[i + 1];
-            return edgeBulge(raw, s, e) <= 0.13;
-        });
-        if (rightAngles && edgesStraight) {
-            // crisp axis-aligned rectangle spanning the drawn extents
-            return [
-                {x: minX, y: minY, p}, {x: maxX, y: minY, p},
-                {x: maxX, y: maxY, p}, {x: minX, y: maxY, p},
-                {x: minX, y: minY, p},
-            ];
+    if (!rectOnly) {
+        // triangle: every 3-corner subset of the dominant corners competes
+        const corners = dominantCorners(raw, minX, minY, maxX, maxY);
+        const n = corners.length;
+        const minArea = Math.max(64, diag * diag * 0.004);
+        for (let a = 0; a < n; a++) {
+            for (let b = a + 1; b < n; b++) {
+                for (let c = b + 1; c < n; c++) {
+                    const tri = [corners[a], corners[b], corners[c]];
+                    if (polygonArea(tri) < minArea) continue;
+                    const pts = [tri[0], tri[1], tri[2], tri[0]];
+                    offer(polyResidual(raw, pts), pts, 1);
+                }
+            }
+        }
+        if (Math.min(w, h) >= 8) {
+            offer(
+                ellipseResidual(raw, minX, minY, maxX, maxY),
+                ellipseCandidate(minX, minY, maxX, maxY, p),
+                1.05,
+            );
         }
     }
-    if (corners.length === 3) {
-        const [a, b, c] = corners;
-        return [{...a, p}, {...b, p}, {...c, p}, {...a, p}];
-    }
-    if (Math.min(w, h) >= 8) {
-        // ellipse inscribed in the drawn bbox
-        const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-        const rx = w / 2, ry = h / 2;
-        const out: Point[] = [];
-        for (let i = 0; i <= 72; i++) {
-            const t = (i / 72) * Math.PI * 2;
-            out.push({x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t), p});
-        }
-        return out;
-    }
+
+    if (best && best.score <= diag * SNAP_RESIDUAL) return best.pts;
     return null;
 };

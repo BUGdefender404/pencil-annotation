@@ -97,13 +97,8 @@ export class DocOverlay {
      *  scrolling can never reach the real scroller and we translate it by hand */
     private pan: {id: number; lastX: number; lastY: number; vy: number; lastT: number} | null = null;
     private panMomentum: number | null = null;
-    private pendingDotTimer: number | null = null;
-    /** dot held during double-tap detection, together with its anchor — finishPointer
-     *  clears curAnchor before the delayed commit runs, so it must travel along */
-    private pendingDot: {points: Point[]; anchor: StrokeAnchor | null} | null = null;
-    /** stroke id of a dot that already committed while waiting for its double-tap pair */
-    private pendingDotCommitted: string | null = null;
-    private lastPenTap = {t: 0, x: 0, y: 0};
+    /** last pen tap of a possible double-tap pair (id lets us erase its dot) */
+    private lastPenTap = {t: 0, x: 0, y: 0, id: null as string | null};
     /** GoodNotes-style shape snapping: pause mid-stroke and a line/rectangle/
      *  triangle/ellipse straightens itself; moving the pen again reverts to freehand */
     private shapeTimer: number | null = null;
@@ -277,6 +272,13 @@ export class DocOverlay {
         return {x: r.left - wr.left, y: r.top - wr.top};
     }
 
+    private blockOriginById(blockId: string): {x: number; y: number} | null {
+        const w = this.wysiwygEl;
+        if (!w) return null;
+        const el = w.querySelector<HTMLElement>(`[data-node-id="${blockId}"]`);
+        return el ? this.blockOrigin(el) : null;
+    }
+
     /** find the deepest text block under a screen point, for stroke anchoring */
     private captureAnchor(clientX: number, clientY: number): StrokeAnchor | null {
         const w = this.wysiwygEl;
@@ -292,10 +294,14 @@ export class DocOverlay {
     }
 
     private blockOffsetCache = new Map<string, {dx: number; dy: number}>();
+    /** last origin seen for each anchor block — fallback while SiYuan re-renders it */
+    private lastKnownOrigin = new Map<string, {x: number; y: number}>();
 
     /**
-     * Per-stroke render offset: how far the stroke's anchor block has moved
-     * since the stroke was drawn. Strokes without an anchor never move.
+     * Per-stroke render offset: the current origin of the stroke's anchor
+     * block. Anchored strokes store block-relative points, so painting at
+     * points + origin keeps them glued to the block on every device and
+     * through any layout change. Strokes without an anchor never move.
      */
     private buildOffsets(): OffsetFn {
         this.blockOffsetCache.clear();
@@ -307,14 +313,19 @@ export class DocOverlay {
             if (!s.anchor) return zero;
             let d = this.blockOffsetCache.get(s.anchor.blockId);
             if (!d) {
-                d = {dx: 0, dy: 0};
                 const el = w.querySelector<HTMLElement>(`[data-node-id="${s.anchor.blockId}"]`);
                 if (el) {
                     const r = el.getBoundingClientRect();
                     d = {
-                        dx: Math.round((r.left - wr.left - s.anchor.ox) * 100) / 100,
-                        dy: Math.round((r.top - wr.top - s.anchor.oy) * 100) / 100,
+                        dx: Math.round((r.left - wr.left) * 100) / 100,
+                        dy: Math.round((r.top - wr.top) * 100) / 100,
                     };
+                    this.lastKnownOrigin.set(s.anchor.blockId, {x: d.dx, y: d.dy});
+                } else {
+                    // block missing from the DOM right now (re-render in
+                    // progress) — keep the stroke at its last known spot
+                    const known = this.lastKnownOrigin.get(s.anchor.blockId);
+                    d = known ? {dx: known.x, dy: known.y} : zero;
                 }
                 this.blockOffsetCache.set(s.anchor.blockId, d);
             }
@@ -495,11 +506,13 @@ export class DocOverlay {
             if (hit) {
                 const o = this.blockOrigin(hit);
                 if (o) {
-                    s.anchor = {
-                        blockId: hit.dataset.nodeId!,
-                        ox: Math.round(o.x * 100) / 100,
-                        oy: Math.round(o.y * 100) / 100,
-                    };
+                    s.anchor = {blockId: hit.dataset.nodeId!, ox: 0, oy: 0};
+                    // rebase the points to block-relative space
+                    for (const p of s.points) {
+                        p.x -= o.x;
+                        p.y -= o.y;
+                    }
+                    this.renderer.forget(s.id);
                     any = true;
                 }
             }
@@ -526,11 +539,6 @@ export class DocOverlay {
         this.cancelActiveInput();
         this.stopPan();
         this.clearShapeSnap();
-        if (this.pendingDotTimer !== null) {
-            window.clearTimeout(this.pendingDotTimer);
-            this.pendingDotTimer = null;
-            this.pendingDot = null;
-        }
         document.removeEventListener("visibilitychange", this.onVisible);
         this.mutationObs?.disconnect();
         this.mutationObs = null;
@@ -618,12 +626,14 @@ export class DocOverlay {
         if (e.pointerType === "touch") {
             this.touchPointers.add(e.pointerId);
             const penWasDrawing = this.activePointerId !== null;
-            if (this.deps.settings.onlyStylus || penWasDrawing || this.touchPointers.size >= 2) {
+            // palm landing while the pen is mid-stroke: ignore it completely —
+            // cancelling here used to eat the stroke being written
+            if (penWasDrawing) return;
+            if (this.deps.settings.onlyStylus || this.touchPointers.size >= 2) {
                 if (this.touchPointers.size >= 2) this.stopPan(); // second finger kills the pan
                 this.cancelActiveInput();
-                // GoodNotes-style: with onlyStylus a lone finger pans the page —
-                // but a touch that landed while the pen was writing is a palm
-                if (this.deps.settings.onlyStylus && this.touchPointers.size === 1 && !this.pan && !penWasDrawing) {
+                // GoodNotes-style: with onlyStylus a lone finger pans the page
+                if (this.deps.settings.onlyStylus && this.touchPointers.size === 1 && !this.pan) {
                     this.startPan(e);
                 }
                 return;
@@ -701,6 +711,7 @@ export class DocOverlay {
                     return; // stay snapped while the pen rests
                 }
             }
+            let pushed = false;
             for (const ev of samples) {
                 const p = this.toDoc(ev);
                 p.p = e.pointerType === "pen" ? Math.max(0.04, (ev as PointerEvent).pressure || 0.25) : 0.5;
@@ -709,9 +720,14 @@ export class DocOverlay {
                 if (d < 0.7 && this.curPoints.length > 1) continue;
                 this.curMoved = Math.max(this.curMoved, Math.hypot(p.x - this.curStart.x, p.y - this.curStart.y));
                 this.curPoints.push(p);
+                pushed = true;
             }
-            this.lastMoveAt = Date.now();
-            this.scheduleShapeCheck();
+            // only real movement re-arms the shape timer — pen jitter must not
+            // keep a resting stroke from ever snapping
+            if (pushed) {
+                this.lastMoveAt = Date.now();
+                this.scheduleShapeCheck();
+            }
             this.redrawLive();
         } else if (this.erasing) {
             const first = this.curPoints[this.curPoints.length - 1];
@@ -752,9 +768,24 @@ export class DocOverlay {
         if (this.drawing) {
             this.finishStroke(pt);
         } else if (this.erasing) {
+            // an eraser TAP also joins the double-tap gesture, so pencil
+            // double-tap switches back from eraser to pen
+            const isTap = this.curMoved < 7 && (Date.now() - this.curStart.t) < 160;
+            const gesture = isTap && !this.eraseHitSomething &&
+                this.activePointerType === "pen" && this.deps.settings.doubleTapToggle;
+            if (gesture && this.tryTogglePair(pt)) {
+                // consumed by the gesture; nothing was erased
+            } else if (this.eraseHitSomething) {
+                this.changed();
+                this.lastPenTap = {t: 0, x: 0, y: 0, id: null};
+            } else if (gesture) {
+                // first tap of a potential eraser double-tap (nothing armed to erase)
+                this.lastPenTap = {t: Date.now(), x: pt.x, y: pt.y, id: null};
+            } else {
+                this.lastPenTap = {t: 0, x: 0, y: 0, id: null};
+            }
             this.curPoints = [];
             this.redrawLive();
-            if (this.eraseHitSomething) this.changed();
         } else if (this.selDrag) {
             this.store.commitMove(this.selected, this.selDrag.totalDx, this.selDrag.totalDy);
             this.reanchorStrokes(this.selected);
@@ -900,57 +931,63 @@ export class DocOverlay {
         for (const s of strokes) {
             const p0 = s.points[0];
             if (!p0) continue;
-            const anchor = this.captureAnchor(wr.left + p0.x, wr.top + p0.y);
-            if (anchor) s.anchor = anchor;
+            // current origin of the block the points are relative to
+            const prev = s.anchor
+                ? (this.blockOriginById(s.anchor.blockId) ?? {x: 0, y: 0})
+                : {x: 0, y: 0};
+            const anchor = this.captureAnchor(wr.left + p0.x + prev.x, wr.top + p0.y + prev.y);
+            if (anchor) {
+                s.anchor = {blockId: anchor.blockId, ox: 0, oy: 0};
+                // rebase the (dragged) points onto the new block's frame
+                for (const p of s.points) {
+                    p.x += prev.x - anchor.ox;
+                    p.y += prev.y - anchor.oy;
+                }
+                this.renderer.forget(s.id);
+            }
+            // no block under the new spot → keep the old anchor; the drag
+            // delta already lives in the points
         }
     }
 
     private finishStroke(pt: Point) {
-        const isDot = this.curPoints.length < 3 && this.curMoved < 5;
         const points = this.shapeSnap ?? this.curPoints;
+        // a "tap" is judged by MOVEMENT and DURATION, not sample count —
+        // Apple Pencil reports 240Hz, so even a stationary tap produces many
+        // samples. Deliberate taps are brief and motionless; handwriting
+        // dots (点) dwell 80-200ms, so the tight duration keeps them out of
+        // the gesture path.
+        const isTap = this.curMoved < 7 && (Date.now() - this.curStart.t) < 160;
+        const gesture = isTap && this.activePointerType === "pen" && this.deps.settings.doubleTapToggle;
+        if (gesture && this.tryTogglePair(pt)) return;
 
-        if (isDot && this.activePointerType === "pen" && this.deps.settings.doubleTapToggle) {
-            const sinceLast = Date.now() - this.lastPenTap.t;
-            const nearLast = Math.hypot(pt.x - this.lastPenTap.x, pt.y - this.lastPenTap.y) < 28;
-            if (sinceLast < 420 && nearLast) {
-                // second tap of a pencil double-tap → tool toggle, no dots left behind
-                if (this.pendingDotTimer !== null) {
-                    window.clearTimeout(this.pendingDotTimer);
-                    this.pendingDotTimer = null;
-                    this.pendingDot = null;
-                } else if (this.pendingDotCommitted) {
-                    // the first dot already committed (tap landed in the 300-420ms
-                    // gap) — remove it so the pair leaves no trace
-                    const dotId = this.pendingDotCommitted;
-                    this.store.eraseWhere((s) => s.id === dotId);
-                    this.renderer.forget(dotId);
-                    this.scheduleRedraw();
-                    this.changed();
-                    this.pendingDotCommitted = null;
-                }
-                this.lastPenTap = {t: 0, x: 0, y: 0};
-                this.redrawLive();
-                this.deps.onDoubleTapToggle();
-                return;
-            }
-            // hold the dot briefly in case a double-tap follows
-            this.pendingDotCommitted = null;
-            this.pendingDot = {points, anchor: this.curAnchor};
-            this.pendingDotTimer = window.setTimeout(() => {
-                this.pendingDotTimer = null;
-                if (this.pendingDot) {
-                    const committed = this.commitStroke(this.pendingDot.points, this.pendingDot.anchor);
-                    this.pendingDotCommitted = committed ? committed.id : null;
-                    this.pendingDot = null;
-                }
-            }, 300);
-            this.lastPenTap = {t: Date.now(), x: pt.x, y: pt.y};
-            this.redrawLive();
-            return;
+        const committed = this.commitStroke(points);
+        // remember a brief, motionless pen tap so a matching second tap can
+        // toggle; any real stroke or a slower/longer dot breaks the pair
+        this.lastPenTap = gesture && committed
+            ? {t: Date.now(), x: pt.x, y: pt.y, id: committed.id}
+            : {t: 0, x: 0, y: 0, id: null};
+    }
+
+    /**
+     * If `pt` completes a double-tap with the previously armed tap: erase the
+     * first tap's dot (when there was one) and toggle pen<->eraser.
+     * @returns true when the tap was consumed by the gesture
+     */
+    private tryTogglePair(pt: Point): boolean {
+        const prev = this.lastPenTap;
+        if (!prev.t || Date.now() - prev.t >= 480 ||
+            Math.hypot(pt.x - prev.x, pt.y - prev.y) >= 16) return false;
+        if (prev.id) {
+            this.store.eraseWhere((s) => s.id === prev.id);
+            this.renderer.forget(prev.id);
+            this.scheduleRedraw();
+            this.changed();
         }
-
-        this.pendingDotCommitted = null;
-        this.commitStroke(points);
+        this.lastPenTap = {t: 0, x: 0, y: 0, id: null};
+        this.redrawLive();
+        this.deps.onDoubleTapToggle();
+        return true;
     }
 
     /** current anchor delta for the in-progress stroke */
@@ -977,8 +1014,16 @@ export class DocOverlay {
             : {color: cfg.hlColor, width: cfg.hlWidth, opacity: 0.45};
         const committed = this.store.addStroke(tool, {...stroke, simulate: this.activePointerType !== "pen"}, points);
         const a = anchor !== undefined ? anchor : this.curAnchor;
-        if (a) committed.anchor = a;
-        this.pendingDot = null;
+        if (a) {
+            // store block-relative points: the stroke follows this block on
+            // every device and through any reflow / layout change
+            committed.anchor = {blockId: a.blockId, ox: 0, oy: 0};
+            committed.points = points.map((p) => ({
+                x: Math.round((p.x - a.ox) * 100) / 100,
+                y: Math.round((p.y - a.oy) * 100) / 100,
+                p: p.p,
+            }));
+        }
         this.redrawLive();
         this.paintCommitted(committed);
         this.changed();
