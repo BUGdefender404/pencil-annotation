@@ -67,11 +67,9 @@ export class StrokeRenderer {
             for (let i = 1; i < stroke.points.length; i++) {
                 path.lineTo(stroke.points[i].x, stroke.points[i].y);
             }
-            // match the ribbon width perfect-freehand would have produced:
-            // thinning 0 → full size; otherwise radius size·easing(0.5) per side
-            strokeWidth = thinning === 0
-                ? stroke.width
-                : stroke.width * 2 * Math.sin(Math.PI / 4);
+            // the slider number IS the ink width — a snapped rectangle drawn
+            // with the 2px brush must come out 2px wide on every input type
+            strokeWidth = stroke.width;
         } else {
             const outline = StrokeRenderer.outline(stroke, live);
             if (outline.length > 0) {
