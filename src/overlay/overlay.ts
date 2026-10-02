@@ -108,6 +108,24 @@ export class DocOverlay {
     /** recent input samples (≈last 350ms) — lets the rest check measure the
      *  pen's current speed instead of trusting timestamp gaps alone */
     private trail: Array<{t: number; x: number; y: number}> = [];
+    /**
+     * Post-lift snap: a finished stroke that looks like a closed shape waits
+     * briefly before committing — pausing after the lift perfects it, while
+     * starting a new stroke within the window commits the raw one (so normal
+     * handwriting never snaps). Nothing is painted on the ink layer until
+     * either happens; the live layer keeps showing the raw stroke.
+     */
+    private pendingSnap: {
+        timer: number;
+        points: Point[];
+        snapped: Point[];
+        anchor: StrokeAnchor | null;
+        tool: "pen" | "highlighter";
+        color: string;
+        width: number;
+        opacity: number;
+        simulate: boolean;
+    } | null = null;
 
     private constructor(protyle: ProtyleLike, deps: OverlayDeps) {
         this.protyle = protyle;
@@ -426,6 +444,15 @@ export class DocOverlay {
                 points: this.shapeSnap ?? this.curPoints, createdAt: 0,
                 ...(this.curAnchor ? {anchor: this.curAnchor} : {}),
             }, this.renderer, vp, this.liveOffset());
+        } else if (this.pendingSnap) {
+            // a finished stroke waiting out the post-lift snap window: keep
+            // showing it on the live layer until it commits (raw or snapped)
+            const pd = this.pendingSnap;
+            paintOne(ctx, {
+                id: "pending", tool: pd.tool, color: pd.color, width: pd.width,
+                opacity: pd.opacity, simulate: pd.simulate, points: pd.points, createdAt: 0,
+                ...(pd.anchor ? {anchor: pd.anchor} : {}),
+            }, this.renderer, vp, this.liveOffsetFor(pd.anchor));
         } else if (this.erasing && this.deps.settings.showEraserCursor && this.curPoints.length > 0) {
             const last = this.curPoints[this.curPoints.length - 1];
             ctx.save();
@@ -563,6 +590,7 @@ export class DocOverlay {
     }
 
     destroy() {
+        this.cancelPendingSnap(true);
         this.cancelActiveInput();
         this.stopPan();
         this.clearShapeSnap();
@@ -647,6 +675,8 @@ export class DocOverlay {
     private onPointerDown = (e: PointerEvent) => {
         if (!this.mode) return;
         e.stopPropagation();
+        // a new stroke during the post-lift snap window keeps the raw one
+        this.cancelPendingSnap(true);
 
         const pt = this.toDoc(e);
 
@@ -1027,12 +1057,68 @@ export class DocOverlay {
         const gesture = isTap && this.activePointerType === "pen" && this.deps.settings.doubleTapToggle;
         if (gesture && this.tryTogglePair(pt)) return;
 
+        if (this.shapeSnap) {
+            // perfected mid-stroke (the user held the pen still): commit now
+            this.lastPenTap = {t: 0, x: 0, y: 0, id: null};
+            this.commitStroke(points);
+            return;
+        }
+
+        // post-lift snap: the natural gesture is "draw the box, lift, look at
+        // it" — recognize immediately and give the user a short window to
+        // keep drawing (commits raw, handwriting stays untouched) before the
+        // perfected shape is committed
+        const tool = this.deps.config.tool;
+        if (this.deps.settings.shapeSnap && (tool === "pen" || tool === "highlighter") &&
+            !isTap && this.curMoved > 12) {
+            const snapped = recognizeShape(points);
+            if (snapped) {
+                this.stagePendingSnap(points, snapped);
+                this.lastPenTap = {t: 0, x: 0, y: 0, id: null};
+                return;
+            }
+        }
+
         const committed = this.commitStroke(points);
         // remember a brief, motionless pen tap so a matching second tap can
         // toggle; any real stroke or a slower/longer dot breaks the pair
         this.lastPenTap = gesture && committed
             ? {t: Date.now(), x: pt.x, y: pt.y, id: committed.id}
             : {t: 0, x: 0, y: 0, id: null};
+    }
+
+    /** hold a finished shape-looking stroke for a moment; commit perfected
+     *  when the window lapses, raw when the user starts a new stroke */
+    private stagePendingSnap(points: Point[], snapped: Point[]) {
+        this.cancelPendingSnap(true);
+        const cfg = this.deps.config;
+        const tool = cfg.tool as "pen" | "highlighter";
+        const anchor = this.curAnchor ? {...this.curAnchor} : null;
+        this.pendingSnap = {
+            timer: window.setTimeout(() => {
+                const pending = this.pendingSnap;
+                this.pendingSnap = null;
+                if (!pending) return;
+                this.commitStroke(pending.snapped, pending.anchor);
+            }, 400),
+            points,
+            snapped,
+            anchor,
+            tool,
+            color: tool === "pen" ? cfg.penColor : cfg.hlColor,
+            width: tool === "pen" ? cfg.penWidth : cfg.hlWidth,
+            opacity: tool === "pen" ? 1 : 0.45,
+            simulate: this.activePointerType !== "pen",
+        };
+    }
+
+    private cancelPendingSnap(commitRaw: boolean) {
+        const pending = this.pendingSnap;
+        if (!pending) return;
+        this.pendingSnap = null;
+        window.clearTimeout(pending.timer);
+        // the stroke was never committed — don't lose the user's ink
+        if (commitRaw) this.commitStroke(pending.points, pending.anchor);
     }
 
     /**
@@ -1058,16 +1144,21 @@ export class DocOverlay {
 
     /** current anchor delta for the in-progress stroke */
     private liveOffset(): {dx: number; dy: number} {
-        if (!this.curAnchor) return {dx: 0, dy: 0};
+        return this.liveOffsetFor(this.curAnchor);
+    }
+
+    /** anchor delta (block origin now − anchor origin) for any staged anchor */
+    private liveOffsetFor(anchor: StrokeAnchor | null): {dx: number; dy: number} {
+        if (!anchor) return {dx: 0, dy: 0};
         const w = this.wysiwygEl;
         if (!w) return {dx: 0, dy: 0};
-        const el = w.querySelector<HTMLElement>(`[data-node-id="${this.curAnchor.blockId}"]`);
+        const el = w.querySelector<HTMLElement>(`[data-node-id="${anchor.blockId}"]`);
         if (!el) return {dx: 0, dy: 0};
         const wr = w.getBoundingClientRect();
         const r = el.getBoundingClientRect();
         return {
-            dx: Math.round((r.left - wr.left - this.curAnchor.ox) * 100) / 100,
-            dy: Math.round((r.top - wr.top - this.curAnchor.oy) * 100) / 100,
+            dx: Math.round((r.left - wr.left - anchor.ox) * 100) / 100,
+            dy: Math.round((r.top - wr.top - anchor.oy) * 100) / 100,
         };
     }
 

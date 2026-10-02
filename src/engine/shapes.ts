@@ -292,7 +292,7 @@ const loopShape = (raw: Point[], rectOnly: boolean): Point[] | null => {
                 {x: minX, y: minY, p}, {x: maxX, y: minY, p},
                 {x: maxX, y: maxY, p}, {x: minX, y: maxY, p},
                 {x: minX, y: minY, p},
-            ], 0.95);
+            ], 0.85);
         }
     }
 

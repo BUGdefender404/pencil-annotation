@@ -260,7 +260,7 @@ var loopShape = (raw, rectOnly) => {
         { x: maxX, y: maxY, p },
         { x: minX, y: maxY, p },
         { x: minX, y: minY, p }
-      ], 0.95);
+      ], 0.85);
     }
   }
   if (!rectOnly) {
