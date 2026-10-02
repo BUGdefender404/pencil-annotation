@@ -180,7 +180,54 @@ var dominantCorners = (raw, minX, minY, maxX, maxY) => {
     if (flatAng < 155) break;
     corners.splice(flat, 1);
   }
-  return corners;
+  return { corners, loop, idx: idx0 };
+};
+var forcedQuadRect = (loop, idx, corners, p) => {
+  const cs = corners.slice();
+  while (cs.length > 4) {
+    let flat = -1, flatAng = -1;
+    for (let i = 0; i < cs.length; i++) {
+      const ang = interiorAngle(
+        cs[(i + cs.length - 1) % cs.length],
+        cs[i],
+        cs[(i + 1) % cs.length]
+      );
+      if (ang > flatAng) {
+        flatAng = ang;
+        flat = i;
+      }
+    }
+    if (flatAng < 135) break;
+    cs.splice(flat, 1);
+  }
+  if (cs.length !== 4) return null;
+  for (let i = 0; i < 4; i++) {
+    const ang = interiorAngle(cs[(i + 3) % 4], cs[i], cs[(i + 1) % 4]);
+    if (ang < 50 || ang > 145) return null;
+  }
+  for (let k = 0; k < 4; k++) {
+    const a = loop[idx[k]], b = loop[idx[k + 1]];
+    const chord = dist(a, b) || 1;
+    let maxDev = 0;
+    for (let i = idx[k]; i <= idx[k + 1]; i++) {
+      maxDev = Math.max(maxDev, segDist(loop[i], a, b));
+    }
+    if (maxDev / chord > 0.13) return null;
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const pt of loop) {
+    if (pt.x < minX) minX = pt.x;
+    if (pt.x > maxX) maxX = pt.x;
+    if (pt.y < minY) minY = pt.y;
+    if (pt.y > maxY) maxY = pt.y;
+  }
+  return [
+    { x: minX, y: minY, p },
+    { x: maxX, y: minY, p },
+    { x: maxX, y: maxY, p },
+    { x: minX, y: maxY, p },
+    { x: minX, y: minY, p }
+  ];
 };
 var recognizeShape = (input) => {
   if (input.length < 6) return null;
@@ -248,6 +295,9 @@ var loopShape = (raw, rectOnly) => {
     const score = res * pref;
     if (!best || score < best.score) best = { score, pts };
   };
+  const dc = dominantCorners(raw, minX, minY, maxX, maxY);
+  const forced = forcedQuadRect(dc.loop, dc.idx, dc.corners, p);
+  if (forced) return forced;
   {
     let bRes = Infinity;
     for (let deg = 0; deg < 90; deg += 3) {
@@ -264,7 +314,7 @@ var loopShape = (raw, rectOnly) => {
     }
   }
   if (!rectOnly) {
-    const corners = dominantCorners(raw, minX, minY, maxX, maxY);
+    const corners = dc.corners;
     const n = corners.length;
     const minArea = Math.max(64, diag * diag * 4e-3);
     for (let a = 0; a < n; a++) {

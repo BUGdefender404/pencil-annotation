@@ -156,9 +156,13 @@ const ellipseResidual = (raw: Point[], minX: number, minY: number, maxX: number,
  * dominant corners of the closed loop: RDP rooted at the point farthest from
  * the centroid (the raw start can be mid-edge, and RDP always keeps the
  * endpoints, which would fake a corner there), then the shallowest extra
- * kinks are dropped while there are more than six candidates left
+ * kinks are dropped while there are more than six candidates left.
+ * Returns the corners together with their indices in the re-rooted loop so
+ * callers can inspect the edge arcs between them.
  */
-const dominantCorners = (raw: Point[], minX: number, minY: number, maxX: number, maxY: number): Point[] => {
+const dominantCorners = (raw: Point[], minX: number, minY: number, maxX: number, maxY: number): {
+    corners: Point[]; loop: Point[]; idx: number[];
+} => {
     let startIdx = 0, far = -1;
     const icx = (minX + maxX) / 2, icy = (minY + maxY) / 2;
     for (let i = 0; i < raw.length; i++) {
@@ -185,7 +189,66 @@ const dominantCorners = (raw: Point[], minX: number, minY: number, maxX: number,
         if (flatAng < 155) break;
         corners.splice(flat, 1);
     }
-    return corners;
+    return {corners, loop, idx: idx0};
+};
+
+/**
+ * Brute-force rectangle: a closed stroke with four real corners, quad-ish
+ * interior angles and straight-ish edges IS a rectangle however skewed the
+ * user drew it — snap it to the axis-aligned right-angle bbox rectangle
+ * without entering the fit competition at all (an ellipse would sometimes
+ * steal it, and a slanted "perfected" rectangle is never what annotating
+ * means). What keeps genuine ellipses out is edge straightness: an arc cut
+ * into four segments bulges ~0.2 of its chords, hand-drawn quad edges stay
+ * under ~0.1.
+ */
+const forcedQuadRect = (
+    loop: Point[],
+    idx: number[],
+    corners: Point[],
+    p: number,
+): Point[] | null => {
+    const cs = corners.slice();
+    // rounded corners blunt the RDP vertex below 180°; drop the flattest
+    // corner while clearly shallow until four remain
+    while (cs.length > 4) {
+        let flat = -1, flatAng = -1;
+        for (let i = 0; i < cs.length; i++) {
+            const ang = interiorAngle(
+                cs[(i + cs.length - 1) % cs.length], cs[i], cs[(i + 1) % cs.length]);
+            if (ang > flatAng) { flatAng = ang; flat = i; }
+        }
+        if (flatAng < 135) break;
+        cs.splice(flat, 1);
+    }
+    if (cs.length !== 4) return null;
+    // quadrilateral angles: rules out triangles and blobs, allows skew
+    for (let i = 0; i < 4; i++) {
+        const ang = interiorAngle(cs[(i + 3) % 4], cs[i], cs[(i + 1) % 4]);
+        if (ang < 50 || ang > 145) return null;
+    }
+    // straight edges (idx has one extra entry: the loop's closing point)
+    for (let k = 0; k < 4; k++) {
+        const a = loop[idx[k]], b = loop[idx[k + 1]];
+        const chord = dist(a, b) || 1;
+        let maxDev = 0;
+        for (let i = idx[k]; i <= idx[k + 1]; i++) {
+            maxDev = Math.max(maxDev, segDist(loop[i], a, b));
+        }
+        if (maxDev / chord > 0.13) return null;
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const pt of loop) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.y > maxY) maxY = pt.y;
+    }
+    return [
+        {x: minX, y: minY, p}, {x: maxX, y: minY, p},
+        {x: maxX, y: maxY, p}, {x: minX, y: maxY, p},
+        {x: minX, y: minY, p},
+    ];
 };
 
 /**
@@ -278,10 +341,14 @@ const loopShape = (raw: Point[], rectOnly: boolean): Point[] | null => {
         if (!best || score < best.score) best = {score, pts};
     };
 
-    // rectangle: scan orientations only to measure how rect-like the stroke
-    // is, but ALWAYS snap axis-aligned — a hand-drawn box while annotating is
-    // meant to be horizontal, and keeping the drawn tilt makes every slightly
-    // crooked quad into a skewed rectangle (user request: right angles only)
+    // brute-force quad: four corners + straight edges → right-angle rectangle,
+    // no competition (this is what "draw a box" means while annotating)
+    const dc = dominantCorners(raw, minX, minY, maxX, maxY);
+    const forced = forcedQuadRect(dc.loop, dc.idx, dc.corners, p);
+    if (forced) return forced;
+
+    // rect fallback: when the strict quad test misses (very wobbly edges,
+    // extra kinks), the fit competition still awards an axis-aligned rectangle
     {
         let bRes = Infinity;
         for (let deg = 0; deg < 90; deg += 3) {
@@ -298,7 +365,7 @@ const loopShape = (raw: Point[], rectOnly: boolean): Point[] | null => {
 
     if (!rectOnly) {
         // triangle: every 3-corner subset of the dominant corners competes
-        const corners = dominantCorners(raw, minX, minY, maxX, maxY);
+        const corners = dc.corners;
         const n = corners.length;
         const minArea = Math.max(64, diag * diag * 0.004);
         for (let a = 0; a < n; a++) {
