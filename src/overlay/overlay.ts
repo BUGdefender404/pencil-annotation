@@ -105,6 +105,9 @@ export class DocOverlay {
     private shapeSnap: Point[] | null = null;
     private shapeSnapAt: {x: number; y: number} | null = null;
     private lastMoveAt = 0;
+    /** recent input samples (≈last 350ms) — lets the rest check measure the
+     *  pen's current speed instead of trusting timestamp gaps alone */
+    private trail: Array<{t: number; x: number; y: number}> = [];
 
     private constructor(protyle: ProtyleLike, deps: OverlayDeps) {
         this.protyle = protyle;
@@ -371,6 +374,18 @@ export class DocOverlay {
         // running in the tray); the timeout guarantees the repaint happens
         window.setTimeout(run, 150);
     };
+
+    private liveScheduled = false;
+    /** coalesces per-event live-layer repaints into one per animation frame —
+     *  high-rate styli otherwise trigger dozens of full repaints per second */
+    private requestLive() {
+        if (this.liveScheduled) return;
+        this.liveScheduled = true;
+        requestAnimationFrame(() => {
+            this.liveScheduled = false;
+            this.redrawLive();
+        });
+    }
 
     redrawAll() {
         const vp = this.viewport();
@@ -667,6 +682,7 @@ export class DocOverlay {
 
         this.curStart = {x: pt.x, y: pt.y, t: Date.now()};
         this.curMoved = 0;
+        this.trail = [];
         this.eraseHitSomething = false;
 
         const pressure = e.pointerType === "pen" ? Math.max(0.04, e.pressure || 0.25) : 0.5;
@@ -732,18 +748,22 @@ export class DocOverlay {
             if (pushed) {
                 this.lastMoveAt = Date.now();
                 this.scheduleShapeCheck();
+                this.requestLive();
             }
-            this.redrawLive();
         } else if (this.erasing) {
             // chain segment-to-segment (one batch can carry many coalesced
-            // samples; fanning them from a fixed origin skipped corners)
+            // samples; fanning them from a fixed origin skipped corners);
+            // sub-pixel samples are dropped — styli stream them and the
+            // redundant hit-scans make the eraser stutter
+            const offsets = this.buildOffsets();
             for (const ev of samples) {
                 const p = this.toDoc(ev);
                 const last = this.curPoints[this.curPoints.length - 1];
-                this.eraseSegment(last.x, last.y, p.x, p.y);
+                if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.5) continue;
+                this.eraseSegment(last.x, last.y, p.x, p.y, offsets);
                 this.curPoints.push(p);
             }
-            this.redrawLive();
+            this.requestLive();
         } else if (this.selDrag) {
             const dx = pt.x - this.selDrag.lastX;
             const dy = pt.y - this.selDrag.lastY;
@@ -753,7 +773,7 @@ export class DocOverlay {
             this.selDrag.totalDy += dy;
             this.store.moveStrokesTransient(this.selected, dx, dy);
             this.scheduleRedraw();
-            this.redrawLive();
+            this.requestLive();
         }
     };
 
@@ -763,9 +783,12 @@ export class DocOverlay {
         p.p = ev.pointerType === "pen" ? Math.max(0.04, ev.pressure || 0.25) : 0.5;
         const last = this.curPoints[this.curPoints.length - 1];
         if (last && this.curPoints.length > 1 &&
-            Math.hypot(p.x - last.x, p.y - last.y) < 0.7) return false;
+            Math.hypot(p.x - last.x, p.y - last.y) < 0.5) return false;
         this.curMoved = Math.max(this.curMoved, Math.hypot(p.x - this.curStart.x, p.y - this.curStart.y));
         this.curPoints.push(p);
+        const now = performance.now();
+        this.trail.push({t: now, x: p.x, y: p.y});
+        while (this.trail.length > 2 && now - this.trail[0].t > 350) this.trail.shift();
         return true;
     }
 
@@ -925,7 +948,20 @@ export class DocOverlay {
     private tryShapeSnap() {
         if (!this.deps.settings.shapeSnap) return;
         if (!this.drawing || this.shapeSnap || this.erasing || this.selDrag) return;
-        if (Date.now() - this.lastMoveAt < 460) {
+        // styli report micro-tremor while the hand holds the pen still, so a
+        // bare "time since last move" check never settles on high-rate pens:
+        // every 1-2px tremor sample refreshes lastMoveAt and the snap keeps
+        // re-arming forever. Judge rest by the pen's SPEED over the recent
+        // trail instead — tremor crawls a few px/s while drawing moves fast.
+        const now = performance.now();
+        while (this.trail.length > 2 && now - this.trail[0].t > 350) this.trail.shift();
+        const old = this.trail[0];
+        const dt = old ? now - old.t : 0;
+        const lp = this.curPoints[this.curPoints.length - 1];
+        const still = (Date.now() - this.lastMoveAt >= 460) ||
+            (old !== undefined && lp !== undefined && dt >= 200 &&
+                Math.hypot(lp.x - old.x, lp.y - old.y) / dt * 1000 < 40);
+        if (!still) {
             this.scheduleShapeCheck(); // still moving, re-arm
             return;
         }
@@ -1060,11 +1096,11 @@ export class DocOverlay {
         return committed;
     }
 
-    private eraseSegment(x1: number, y1: number, x2: number, y2: number) {
+    private eraseSegment(x1: number, y1: number, x2: number, y2: number, offsets?: OffsetFn) {
         const r = this.deps.settings.eraserRadius;
-        const offsets = this.buildOffsets();
+        const offs = offsets ?? this.buildOffsets();
         const removed = this.store.eraseWhere((s) => {
-            const o = offsets(s);
+            const o = offs(s);
             // shift the test segment into the stroke's creation-space
             return segmentHitsStroke(s, x1 - o.dx, y1 - o.dy, x2 - o.dx, y2 - o.dy, r);
         });

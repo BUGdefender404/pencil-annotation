@@ -25,7 +25,9 @@ export class StrokeRenderer {
             size: stroke.width,
             thinning: stroke.simulate || stroke.tool === "highlighter" ? 0 : 0.55,
             smoothing: 0.58,
-            streamline: stroke.tool === "highlighter" ? 0.5 : 0.42,
+            // streamlining is an explicit smoothing lag: real-pressure styli
+            // sample fast and precisely enough to run with less of it
+            streamline: stroke.tool === "highlighter" ? 0.5 : stroke.simulate ? 0.42 : 0.3,
             simulatePressure: false, // pressure values are precomputed per point
             easing: (t) => Math.sin((t * Math.PI) / 2),
             last: !live,

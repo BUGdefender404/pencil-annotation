@@ -84,7 +84,7 @@ var windsOnce = (pts, cx, cy) => {
     }
     prev = ang;
   }
-  return Math.abs(sum) >= 300 && Math.abs(sum) <= 460;
+  return Math.abs(sum) >= 300 && Math.abs(sum) <= 600;
 };
 var AXIS_SNAP_DEG = 8;
 var SNAP_RESIDUAL = 0.055;

@@ -223,5 +223,39 @@ check("T10 zigzag triangle -> triangle", r && r.length === 4,
     check("T13 sloppy circle -> ellipse", r && r.length === 73, r && r.length);
 }
 
+// T14: retraced rectangles — people often trace 1.2-1.5 loops while drawing
+{
+    const seq = [[0, 0], [200, 0], [200, 120], [0, 120], [0, 0], [200, 0], [200, 120]];
+    const retr = [];
+    const N = 100;
+    for (let i = 0; i <= N; i++) {
+        const u = (i / N) * 6; // 1.5 loops
+        const k = Math.min(5, Math.floor(u));
+        const f = u - k;
+        const A = seq[k], B = seq[k + 1];
+        const w = 1.2 * Math.sin(i * 1.1);
+        retr.push({x: A[0] + (B[0] - A[0]) * f + w, y: A[1] + (B[1] - A[1]) * f - w * 0.6, p: 0.5});
+    }
+    r = recognizeShape(retr);
+    check("T14a rect retraced 1.5 loops -> 5pts", r && r.length === 5,
+        JSON.stringify(r && r.map(q => [Math.round(q.x), Math.round(q.y)])));
+}
+{
+    const seq = [[0, 0], [200, 0], [200, 120], [0, 120], [0, 0], [200, 0], [200, 120]];
+    const retr = [];
+    const N = 110;
+    for (let i = 0; i <= N; i++) {
+        const u = (i / N) * 5; // 1.25 loops, ends on the top edge
+        const k = Math.min(5, Math.floor(u));
+        const f = u - k;
+        const A = seq[k], B = seq[k + 1];
+        const w = 1.2 * Math.sin(i * 1.3);
+        retr.push({x: A[0] + (B[0] - A[0]) * f + w, y: A[1] + (B[1] - A[1]) * f - w * 0.6, p: 0.5});
+    }
+    r = recognizeShape(retr);
+    check("T14b rect retraced 1.25 loops -> 5pts", r && r.length === 5,
+        JSON.stringify(r && r.map(q => [Math.round(q.x), Math.round(q.y)])));
+}
+
 console.log(`[total] ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

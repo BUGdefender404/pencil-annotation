@@ -54,10 +54,11 @@ const polygonArea = (pts: Point[]) => {
 };
 
 /**
- * A genuine shape stroke winds around its centroid exactly once. The winding
- * of the POSITION vector is immune to out-and-back spikes (they never advance
- * the angle) while double loops wind twice and back-and-forth doodles net
- * roughly zero — all rejected before any candidate fit is attempted.
+ * A genuine shape stroke winds around its centroid once, give or take a
+ * retrace — people often trace a rectangle 1.5 times while drawing it. The
+ * winding of the POSITION vector is immune to out-and-back spikes (they never
+ * advance the angle); double loops wind 720° and back-and-forth doodles net
+ * roughly zero — both rejected before any candidate fit is attempted.
  */
 const windsOnce = (pts: Point[], cx: number, cy: number) => {
     let sum = 0;
@@ -71,7 +72,7 @@ const windsOnce = (pts: Point[], cx: number, cy: number) => {
         }
         prev = ang;
     }
-    return Math.abs(sum) >= 300 && Math.abs(sum) <= 460;
+    return Math.abs(sum) >= 300 && Math.abs(sum) <= 600;
 };
 
 /** near-horizontal / near-vertical lines snap to the axis within this many degrees */
