@@ -204,6 +204,7 @@ export class DocOverlay {
         this.capture.addEventListener("pointermove", this.onPointerMove);
         this.capture.addEventListener("pointerup", this.onPointerUp);
         this.capture.addEventListener("pointercancel", this.onPointerCancel);
+        this.capture.addEventListener("wheel", this.onWheel, {passive: false});
         this.capture.addEventListener("contextmenu", (e) => {
             if (this.mode) e.preventDefault();
         });
@@ -692,7 +693,19 @@ export class DocOverlay {
     private toDoc(e: PointerEvent): Point {
         const wysiwygRect = (this.wysiwygEl ?? this.root).getBoundingClientRect();
         return {x: e.clientX - wysiwygRect.left, y: e.clientY - wysiwygRect.top, p: 0.5};
-    }
+    };
+
+    /** drawing mode covers the content with a capture layer that sits OUTSIDE
+     *  the scrollable element's ancestor chain, so the browser never scrolls
+     *  for it — route wheel input into the scroller by hand */
+    private onWheel = (e: WheelEvent) => {
+        const sc = this.scrollEl || this.contentEl;
+        if (!sc) return;
+        e.preventDefault();
+        const step = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? sc.clientHeight : 1;
+        if (e.deltaY) sc.scrollTop += e.deltaY * step;
+        if (e.deltaX) sc.scrollLeft += e.deltaX * step;
+    };
 
     private onPointerDown = (e: PointerEvent) => {
         if (!this.mode) return;
@@ -739,6 +752,11 @@ export class DocOverlay {
         if (e.pointerType !== "touch") {
             this.stopPan();
             e.preventDefault();
+        }
+        if (e.button === 1) {
+            // middle-drag pans the page, also inside drawing mode
+            this.startPan(e);
+            return;
         }
         this.activePointerId = e.pointerId;
         this.activePointerType = e.pointerType;
