@@ -403,15 +403,24 @@ export class DocOverlay {
     };
 
     private liveScheduled = false;
+    private liveForced = false;
     /** coalesces per-event live-layer repaints into one per animation frame —
      *  high-rate styli otherwise trigger dozens of full repaints per second */
     private requestLive() {
         if (this.liveScheduled) return;
         this.liveScheduled = true;
-        requestAnimationFrame(() => {
+        this.liveForced = false;
+        const run = () => {
+            if (this.liveForced) return;
+            this.liveForced = true;
             this.liveScheduled = false;
             this.redrawLive();
-        });
+        };
+        requestAnimationFrame(run);
+        // rAF never fires while the window is hidden/occluded (SiYuan keeps
+        // running in the tray) — the timeout guarantees the live layer, and
+        // with it the in-progress stroke, still shows up
+        window.setTimeout(run, 150);
     }
 
     redrawAll() {
@@ -688,6 +697,20 @@ export class DocOverlay {
     private onPointerDown = (e: PointerEvent) => {
         if (!this.mode) return;
         e.stopPropagation();
+        // A pen contact while the overlay still believes the previous contact
+        // is down means that contact's pointerup was lost — iOS can eat it
+        // (Pencil hover ghost events, Scribble, palm rejection). There is
+        // only one pencil, so the held state is stale: finish the dead
+        // stroke (its ink is kept) and take over. Without this, every
+        // pen-down was silently dropped until the user lifted the pencil and
+        // let the same-id pointerup reset the state.
+        if (e.pointerType !== "touch" && this.activePointerId !== null) {
+            if (this.drawing) {
+                const last = this.curPoints[this.curPoints.length - 1];
+                if (last) this.finishStroke(last);
+            }
+            this.finishPointer();
+        }
         // a new stroke during the post-lift snap window keeps the raw one
         this.cancelPendingSnap(true);
 
