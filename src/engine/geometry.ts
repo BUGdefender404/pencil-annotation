@@ -1,4 +1,4 @@
-import type {Stroke} from "./types";
+import type {Point, Stroke} from "./types";
 
 export interface BBox {
     minX: number;
@@ -82,6 +82,29 @@ export const translateStroke = (stroke: Stroke, dx: number, dy: number) => {
         p.x = Math.round((p.x + dx) * 100) / 100;
         p.y = Math.round((p.y + dy) * 100) / 100;
     }
+};
+
+/** Zero-phase smoothing for committed ink: two passes of the [1,2,1]/4 kernel
+ *  over interior points. Directional filters (perfect-freehand's streamline)
+ *  lag proportionally to segment length and shear sparse polygons, so
+ *  smoothing happens once here instead — symmetric, so corners are not
+ *  displaced. Strokes with fewer than minCount points (snapped rectangles,
+ *  lines, triangles) are already exact and pass through untouched. */
+export const smoothDense = (points: Point[], minCount = 12): Point[] => {
+    if (points.length < minCount) return points;
+    let pts = points.slice();
+    for (let pass = 0; pass < 2; pass++) {
+        const next = pts.slice();
+        for (let i = 1; i < pts.length - 1; i++) {
+            next[i] = {
+                x: (pts[i - 1].x + 2 * pts[i].x + pts[i + 1].x) / 4,
+                y: (pts[i - 1].y + 2 * pts[i].y + pts[i + 1].y) / 4,
+                p: pts[i].p,
+            };
+        }
+        pts = next;
+    }
+    return pts;
 };
 
 export const newId = (): string =>

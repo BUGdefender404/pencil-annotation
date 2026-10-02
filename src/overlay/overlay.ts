@@ -1,6 +1,7 @@
 import {
     pointHitsStroke,
     segmentHitsStroke,
+    smoothDense,
     unionBBox,
     type BBox,
 } from "../engine/geometry";
@@ -1220,6 +1221,9 @@ export class DocOverlay {
 
     private commitStroke(points: Point[], anchor?: StrokeAnchor | null): Stroke | null {
         if (points.length === 0) return null;
+        // smooth dense freehand ink once, symmetrically (no directional lag);
+        // sparse constructed shapes (snapped rects / lines) pass through exact
+        points = smoothDense(points);
         const cfg = this.deps.config;
         const tool = cfg.tool as "pen" | "highlighter";
         const stroke = tool === "pen"

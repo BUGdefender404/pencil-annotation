@@ -9,7 +9,7 @@ import type {Stroke} from "./types";
  * scrolling and full redraws stay cheap.
  */
 export class StrokeRenderer {
-    private cache = new Map<string, { rev: string; path: Path2D; bbox: BBox }>();
+    private cache = new Map<string, { rev: string; path: Path2D; bbox: BBox; strokeWidth: number }>();
 
     private static rev(stroke: Stroke): string {
         const pts = stroke.points;
@@ -25,36 +25,68 @@ export class StrokeRenderer {
             size: stroke.width,
             thinning: stroke.simulate || stroke.tool === "highlighter" ? 0 : 0.55,
             smoothing: 0.58,
-            // streamlining is an explicit smoothing lag: real-pressure styli
-            // sample fast and precisely enough to run with less of it
-            streamline: stroke.tool === "highlighter" ? 0.5 : stroke.simulate ? 0.42 : 0.3,
+            // streamline must stay 0: it is a per-sample positional lag (each
+            // outline point stops short of its predecessor), invisible on
+            // dense handwriting but enough to shear sparse polygons — a
+            // 5-point snapped rectangle came out as a tilted parallelogram.
+            // Ink smoothing happens once at commit time instead
+            // (smoothDense in geometry.ts, applied by overlay.commitStroke).
+            streamline: 0,
             simulatePressure: false, // pressure values are precomputed per point
             easing: (t) => Math.sin((t * Math.PI) / 2),
             last: !live,
         });
     }
 
-    /** Path2D in document coordinates for the given stroke. */
-    getPath(stroke: Stroke, live = false): { path: Path2D; bbox: BBox } {
+    /**
+     * Path in document coordinates for the given stroke, plus `strokeWidth`:
+     * 0 means "fill this outline path" (pressure-aware ink); a positive value
+     * means "ctx.stroke() this centerline at that width". Constant-width
+     * strokes (uniform pressure, highlighter, simulated input) must be
+     * stroked, not filled: perfect-freehand's outline polygon self-intersects
+     * at sharp corners and the fill winding then punches holes and uneven
+     * width into snapped right-angle rectangles. A dot (nothing to stroke)
+     * still goes through perfect-freehand for its round shape.
+     */
+    getPath(stroke: Stroke, live = false): { path: Path2D; bbox: BBox; strokeWidth: number } {
         const rev = StrokeRenderer.rev(stroke);
         const cached = this.cache.get(stroke.id);
         if (cached && cached.rev === rev && !live) {
             return cached;
         }
-        const outline = StrokeRenderer.outline(stroke, live);
-        const path = new Path2D();
-        if (outline.length > 0) {
-            path.moveTo(outline[0][0], outline[0][1]);
-            for (let i = 1; i < outline.length; i++) {
-                path.lineTo(outline[i][0], outline[i][1]);
-            }
-            path.closePath();
-        }
         const bbox = strokeBBox(stroke);
-        if (!live) {
-            this.cache.set(stroke.id, {rev, path, bbox});
+        const diag = Math.hypot(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY);
+        const thinning = stroke.simulate || stroke.tool === "highlighter" ? 0 : 0.55;
+        const uniformP = stroke.points.length > 0 &&
+            stroke.points.every((q) => Math.abs(q.p - stroke.points[0].p) < 0.02);
+        const asLine = diag >= 6 && (thinning === 0 || uniformP);
+        const path = new Path2D();
+        let strokeWidth = 0;
+        if (asLine) {
+            path.moveTo(stroke.points[0].x, stroke.points[0].y);
+            for (let i = 1; i < stroke.points.length; i++) {
+                path.lineTo(stroke.points[i].x, stroke.points[i].y);
+            }
+            // match the ribbon width perfect-freehand would have produced:
+            // thinning 0 → full size; otherwise radius size·easing(0.5) per side
+            strokeWidth = thinning === 0
+                ? stroke.width
+                : stroke.width * 2 * Math.sin(Math.PI / 4);
+        } else {
+            const outline = StrokeRenderer.outline(stroke, live);
+            if (outline.length > 0) {
+                path.moveTo(outline[0][0], outline[0][1]);
+                for (let i = 1; i < outline.length; i++) {
+                    path.lineTo(outline[i][0], outline[i][1]);
+                }
+                path.closePath();
+            }
         }
-        return {path, bbox};
+        const result = {rev, path, bbox, strokeWidth};
+        if (!live) {
+            this.cache.set(stroke.id, result);
+        }
+        return result;
     }
 
     forget(id: string) {
@@ -103,7 +135,7 @@ export const paintStrokes = (
     for (const stroke of strokes) {
         if (skip && skip(stroke)) continue;
         const off = offsets ? offsets(stroke) : {dx: 0, dy: 0};
-        const {path, bbox} = renderer.getPath(stroke);
+        const {path, bbox, strokeWidth} = renderer.getPath(stroke);
         if (!bboxesIntersect(
             {minX: bbox.minX + off.dx, minY: bbox.minY + off.dy, maxX: bbox.maxX + off.dx, maxY: bbox.maxY + off.dy},
             view,
@@ -111,8 +143,16 @@ export const paintStrokes = (
         ctx.save();
         ctx.translate(off.dx, off.dy);
         ctx.globalAlpha = stroke.opacity;
-        ctx.fillStyle = stroke.color;
-        ctx.fill(path);
+        if (strokeWidth > 0) {
+            ctx.strokeStyle = stroke.color;
+            ctx.lineWidth = strokeWidth;
+            ctx.lineJoin = "round";
+            ctx.lineCap = "round";
+            ctx.stroke(path);
+        } else {
+            ctx.fillStyle = stroke.color;
+            ctx.fill(path);
+        }
         ctx.restore();
     }
     ctx.restore();
@@ -129,9 +169,17 @@ export const paintOne = (
     ctx.save();
     ctx.translate(-viewport.originX, -viewport.originY);
     if (offset) ctx.translate(offset.dx, offset.dy);
-    const {path} = renderer.getPath(stroke, live);
+    const {path, strokeWidth} = renderer.getPath(stroke, live);
     ctx.globalAlpha = stroke.opacity;
-    ctx.fillStyle = stroke.color;
-    ctx.fill(path);
+    if (strokeWidth > 0) {
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = strokeWidth;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.stroke(path);
+    } else {
+        ctx.fillStyle = stroke.color;
+        ctx.fill(path);
+    }
     ctx.restore();
 };
