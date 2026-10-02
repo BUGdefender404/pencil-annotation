@@ -61,17 +61,41 @@ export const segmentHitsStroke = (
     };
     if (!bboxesIntersect(bbox, hitBox)) return false;
 
-    // decimate long strokes for cheaper hit tests
-    const step = Math.max(1, Math.floor(stroke.points.length / 120));
     const pts = stroke.points;
+    if (pts.length === 1) {
+        return distSqToSegment(pts[0].x, pts[0].y, x1, y1, x2, y2) <= threshold * threshold;
+    }
+    // every stroke segment is tested against the sweep segment. Sampling
+    // stroke POINTS instead (the old approach, with decimation on top)
+    // leaves coverage holes exactly where fast strokes store sparse
+    // samples — the eraser then needs repeated scrubs over the same spot.
     const thrSq = threshold * threshold;
-    for (let i = 0; i < pts.length - 1; i += step) {
-        const a = pts[i];
-        const b = pts[Math.min(i + step, pts.length - 1)];
-        if (distSqToSegment(a.x, a.y, x1, y1, x2, y2) <= thrSq ||
-            distSqToSegment(b.x, b.y, x1, y1, x2, y2) <= thrSq) return true;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        if (distSqSegToSeg(a.x, a.y, b.x, b.y, x1, y1, x2, y2) <= thrSq) return true;
     }
     return false;
+};
+
+/** squared distance between two segments; degenerate segments (a point) fall
+ *  out of the point-to-segment fallbacks naturally */
+const distSqSegToSeg = (
+    ax: number, ay: number, bx: number, by: number,
+    cx: number, cy: number, dx: number, dy: number,
+): number => {
+    // straddle test: proper crossing means distance 0
+    const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+    const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+    const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+        ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
+    return Math.min(
+        distSqToSegment(ax, ay, cx, cy, dx, dy),
+        distSqToSegment(bx, by, cx, cy, dx, dy),
+        distSqToSegment(cx, cy, ax, ay, bx, by),
+        distSqToSegment(dx, dy, ax, ay, bx, by),
+    );
 };
 
 export const pointHitsStroke = (stroke: Stroke, x: number, y: number, threshold: number): boolean =>
