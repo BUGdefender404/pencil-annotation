@@ -268,7 +268,9 @@ export const recognizeShape = (input: Point[]): Point[] | null => {
     if (input.length < 6) return null;
     // Quick closures often overshoot the start point; the spike would bias
     // every fit. Trim the tail where the path comes nearest to the start
-    // again, and judge closedness by that nearest approach.
+    // again — but only when the tail REALLY re-approaches the start: on an
+    // open stroke (a straight line) the tail only gets farther away, and
+    // cutting unconditionally used to lop off the last 30% of every line.
     let endIdx = input.length - 1;
     let nearest = Infinity;
     const tailFrom = Math.floor(input.length * 0.7);
@@ -276,7 +278,17 @@ export const recognizeShape = (input: Point[]): Point[] | null => {
         const d = dist(input[i], input[0]);
         if (d < nearest) { nearest = d; endIdx = i; }
     }
-    const raw = input.slice(0, endIdx + 1);
+    let fMinX = Infinity, fMinY = Infinity, fMaxX = -Infinity, fMaxY = -Infinity;
+    for (const p of input) {
+        if (p.x < fMinX) fMinX = p.x;
+        if (p.x > fMaxX) fMaxX = p.x;
+        if (p.y < fMinY) fMinY = p.y;
+        if (p.y > fMaxY) fMaxY = p.y;
+    }
+    const fullDiag = Math.hypot(fMaxX - fMinX, fMaxY - fMinY);
+    const raw = nearest <= Math.max(8, fullDiag * 0.2)
+        ? input.slice(0, endIdx + 1)
+        : input.slice();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of raw) {
         if (p.x < minX) minX = p.x;
@@ -285,20 +297,42 @@ export const recognizeShape = (input: Point[]): Point[] | null => {
         if (p.y > maxY) maxY = p.y;
     }
     const diag = Math.hypot(maxX - minX, maxY - minY);
-    if (diag < 40) return null;
+    let pathLen = 0;
+    for (let i = 1; i < raw.length; i++) {
+        pathLen += dist(raw[i - 1], raw[i]);
+    }
     const p = avgPressure(raw);
-    const closed = nearest <= Math.max(28, diag * 0.3);
+    // closed = the path comes back near its start. The 28px floor is for
+    // sloppy small circles — but it must never swallow short OPEN strokes:
+    // a 35px vertical line's end is unavoidably ~25px from its start, which
+    // used to classify every short line as "closed" (then rejected by the
+    // closed-size gate → nothing snapped). The end may also never be farther
+    // from the start than half the ink actually drawn.
+    const closed = nearest <= Math.max(28, diag * 0.3) && nearest <= pathLen * 0.5;
 
     if (!closed) {
         const first = raw[0], last = raw[raw.length - 1];
-        // straight line: nearly every point lies on the start-end segment
+        // straight line: nearly every point lies on the start-end segment.
+        // Two gates keep handwriting out: a line must be at least 20px long
+        // (deliberate short underlines qualify, character strokes usually
+        // don't reach), and its deviation tolerance scales with length with
+        // a tight 3.5px floor — the old fixed 10px floor waved handwriting
+        // that wandered a quarter of its own length straight through.
         const len = dist(first, last);
-        if (len >= diag * 0.75) { // else it doubles back — not a line
+        const ang = Math.atan2(last.y - first.y, last.x - first.x) * 180 / Math.PI;
+        // Only near-axis strokes may snap when short: an underline gains
+        // real value from snapping to the axis, while a short diagonal is
+        // indistinguishable from a character stroke — straightening it to
+        // its own chord would just eat handwriting. Off-axis lines must be
+        // clearly deliberate (40px+) to qualify at all.
+        const nearAxis = Math.abs(ang) <= AXIS_SNAP_DEG ||
+            Math.abs(Math.abs(ang) - 180) <= AXIS_SNAP_DEG ||
+            Math.abs(Math.abs(ang) - 90) <= AXIS_SNAP_DEG;
+        if (len >= Math.max(nearAxis ? 20 : 40, diag * 0.75)) { // else it doubles back — not a line
             let maxDev = 0;
             for (const pt of raw) maxDev = Math.max(maxDev, segDist(pt, first, last));
-            if (maxDev <= Math.max(10, len * 0.08)) {
+            if (maxDev <= Math.max(3.5, len * 0.06)) {
                 let ax = first.x, ay = first.y, bx = last.x, by = last.y;
-                const ang = Math.atan2(last.y - first.y, last.x - first.x) * 180 / Math.PI;
                 if (Math.abs(ang) <= AXIS_SNAP_DEG || Math.abs(Math.abs(ang) - 180) <= AXIS_SNAP_DEG) {
                     ay = by = (first.y + last.y) / 2;
                 } else if (Math.abs(Math.abs(ang) - 90) <= AXIS_SNAP_DEG) {
@@ -309,11 +343,12 @@ export const recognizeShape = (input: Point[]): Point[] | null => {
         }
         // an outline with only the closing side missing (three sides of a
         // rectangle, say) closes itself into the shape
-        if (nearest <= Math.max(45, diag * 0.5)) {
+        if (diag >= 40 && nearest <= Math.max(45, diag * 0.5)) {
             return loopShape(raw.concat([{x: first.x, y: first.y, p: first.p}]), true);
         }
         return null;
     }
+    if (diag < 40) return null;
     return loopShape(raw, false);
 };
 

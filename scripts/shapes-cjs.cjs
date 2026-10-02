@@ -242,7 +242,15 @@ var recognizeShape = (input) => {
       endIdx = i;
     }
   }
-  const raw = input.slice(0, endIdx + 1);
+  let fMinX = Infinity, fMinY = Infinity, fMaxX = -Infinity, fMaxY = -Infinity;
+  for (const p2 of input) {
+    if (p2.x < fMinX) fMinX = p2.x;
+    if (p2.x > fMaxX) fMaxX = p2.x;
+    if (p2.y < fMinY) fMinY = p2.y;
+    if (p2.y > fMaxY) fMaxY = p2.y;
+  }
+  const fullDiag = Math.hypot(fMaxX - fMinX, fMaxY - fMinY);
+  const raw = nearest <= Math.max(8, fullDiag * 0.2) ? input.slice(0, endIdx + 1) : input.slice();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const p2 of raw) {
     if (p2.x < minX) minX = p2.x;
@@ -251,18 +259,22 @@ var recognizeShape = (input) => {
     if (p2.y > maxY) maxY = p2.y;
   }
   const diag = Math.hypot(maxX - minX, maxY - minY);
-  if (diag < 40) return null;
+  let pathLen = 0;
+  for (let i = 1; i < raw.length; i++) {
+    pathLen += dist(raw[i - 1], raw[i]);
+  }
   const p = avgPressure(raw);
-  const closed = nearest <= Math.max(28, diag * 0.3);
+  const closed = nearest <= Math.max(28, diag * 0.3) && nearest <= pathLen * 0.5;
   if (!closed) {
     const first = raw[0], last = raw[raw.length - 1];
     const len = dist(first, last);
-    if (len >= diag * 0.75) {
+    const ang = Math.atan2(last.y - first.y, last.x - first.x) * 180 / Math.PI;
+    const nearAxis = Math.abs(ang) <= AXIS_SNAP_DEG || Math.abs(Math.abs(ang) - 180) <= AXIS_SNAP_DEG || Math.abs(Math.abs(ang) - 90) <= AXIS_SNAP_DEG;
+    if (len >= Math.max(nearAxis ? 20 : 40, diag * 0.75)) {
       let maxDev = 0;
       for (const pt of raw) maxDev = Math.max(maxDev, segDist(pt, first, last));
-      if (maxDev <= Math.max(10, len * 0.08)) {
+      if (maxDev <= Math.max(3.5, len * 0.06)) {
         let ax = first.x, ay = first.y, bx = last.x, by = last.y;
-        const ang = Math.atan2(last.y - first.y, last.x - first.x) * 180 / Math.PI;
         if (Math.abs(ang) <= AXIS_SNAP_DEG || Math.abs(Math.abs(ang) - 180) <= AXIS_SNAP_DEG) {
           ay = by = (first.y + last.y) / 2;
         } else if (Math.abs(Math.abs(ang) - 90) <= AXIS_SNAP_DEG) {
@@ -271,11 +283,12 @@ var recognizeShape = (input) => {
         return [{ x: ax, y: ay, p }, { x: bx, y: by, p }];
       }
     }
-    if (nearest <= Math.max(45, diag * 0.5)) {
+    if (diag >= 40 && nearest <= Math.max(45, diag * 0.5)) {
       return loopShape(raw.concat([{ x: first.x, y: first.y, p: first.p }]), true);
     }
     return null;
   }
+  if (diag < 40) return null;
   return loopShape(raw, false);
 };
 var loopShape = (raw, rectOnly) => {

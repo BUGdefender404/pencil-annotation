@@ -2,7 +2,7 @@
   "name": "pencil-annotation",
   "author": "Ray Zhang",
   "url": "https://github.com/BUGdefender404/pencil-annotation",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "minAppVersion": "3.1.0",
   "kernels": [
     "windows",

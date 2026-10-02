@@ -775,7 +775,7 @@ export class DocOverlay {
         if (this.drawing) {
             if (this.shapeSnap && this.shapeSnapAt) {
                 // pen moved again after the snap → revert to freehand drawing
-                if (Math.hypot(pt.x - this.shapeSnapAt.x, pt.y - this.shapeSnapAt.y) > 6) {
+                if (Math.hypot(pt.x - this.shapeSnapAt.x, pt.y - this.shapeSnapAt.y) > 3) {
                     this.shapeSnap = null;
                     this.shapeSnapAt = null;
                 } else {
@@ -831,7 +831,7 @@ export class DocOverlay {
         this.curPoints.push(p);
         const now = performance.now();
         this.trail.push({t: now, x: p.x, y: p.y});
-        while (this.trail.length > 2 && now - this.trail[0].t > 350) this.trail.shift();
+        while (this.trail.length > 2 && now - this.trail[0].t > 450) this.trail.shift();
         return true;
     }
 
@@ -994,16 +994,19 @@ export class DocOverlay {
         // styli report micro-tremor while the hand holds the pen still, so a
         // bare "time since last move" check never settles on high-rate pens:
         // every 1-2px tremor sample refreshes lastMoveAt and the snap keeps
-        // re-arming forever. Judge rest by the pen's SPEED over the recent
-        // trail instead — tremor crawls a few px/s while drawing moves fast.
+        // re-arming forever. Judge rest by the pen's NET displacement over
+        // the recent trail — tremor oscillates in place (a few px of net
+        // travel) while even slow deliberate writing covers far more. The
+        // old 40px/s threshold fired in the middle of slow handwriting and
+        // ate the user's strokes.
         const now = performance.now();
-        while (this.trail.length > 2 && now - this.trail[0].t > 350) this.trail.shift();
+        while (this.trail.length > 2 && now - this.trail[0].t > 450) this.trail.shift();
         const old = this.trail[0];
         const dt = old ? now - old.t : 0;
         const lp = this.curPoints[this.curPoints.length - 1];
-        const still = (Date.now() - this.lastMoveAt >= 460) ||
-            (old !== undefined && lp !== undefined && dt >= 200 &&
-                Math.hypot(lp.x - old.x, lp.y - old.y) / dt * 1000 < 40);
+        const still = (Date.now() - this.lastMoveAt >= 600) ||
+            (old !== undefined && lp !== undefined && dt >= 400 &&
+                Math.hypot(lp.x - old.x, lp.y - old.y) <= 3);
         if (!still) {
             this.scheduleShapeCheck(); // still moving, re-arm
             return;
@@ -1112,7 +1115,7 @@ export class DocOverlay {
                 const pending = this.pendingSnap;
                 this.pendingSnap = null;
                 if (!pending) return;
-                this.commitStroke(pending.snapped, pending.anchor);
+                this.commitStroke(pending.snapped, pending.anchor, pending.simulate);
             }, 800),
             points,
             snapped,
@@ -1132,7 +1135,7 @@ export class DocOverlay {
         window.clearTimeout(pending.timer);
         // the stroke was never committed — don't lose the user's ink
         if (commitRaw) {
-            const committed = this.commitStroke(pending.points, pending.anchor);
+            const committed = this.commitStroke(pending.points, pending.anchor, pending.simulate);
             if (committed) {
                 // queue it for retroactive perfection once the user pauses
                 this.rawSnapIds.add(committed.id);
@@ -1167,7 +1170,10 @@ export class DocOverlay {
             }
             if (Math.hypot(maxX - minX, maxY - minY) < 55) continue;
             const snapped = recognizeShape(s.points);
-            if (!snapped) continue;
+            // retro-snap is for boxes drawn in rhythm — a 2-point result is a
+            // LINE, and lines must only straighten on the deliberate pause
+            // (holding mid-stroke or waiting after lifting), never retroactively
+            if (!snapped || snapped.length === 2) continue;
             s.points = snapped;
             this.renderer.forget(s.id);
             changedAny = true;
@@ -1219,7 +1225,7 @@ export class DocOverlay {
         };
     }
 
-    private commitStroke(points: Point[], anchor?: StrokeAnchor | null): Stroke | null {
+    private commitStroke(points: Point[], anchor?: StrokeAnchor | null, simulate?: boolean): Stroke | null {
         if (points.length === 0) return null;
         // smooth dense freehand ink once, symmetrically (no directional lag);
         // sparse constructed shapes (snapped rects / lines) pass through exact
@@ -1229,7 +1235,10 @@ export class DocOverlay {
         const stroke = tool === "pen"
             ? {color: cfg.penColor, width: cfg.penWidth, opacity: 1}
             : {color: cfg.hlColor, width: cfg.hlWidth, opacity: 0.45};
-        const committed = this.store.addStroke(tool, {...stroke, simulate: this.activePointerType !== "pen"}, points);
+        // the delayed pending-timer commit must not re-read the live pointer
+        // type (it is cleared after pointerup) — use the captured value
+        const sim = simulate ?? (this.activePointerType !== "pen");
+        const committed = this.store.addStroke(tool, {...stroke, simulate: sim}, points);
         const a = anchor !== undefined ? anchor : this.curAnchor;
         if (a) {
             // store block-relative points: the stroke follows this block on
