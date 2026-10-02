@@ -86,12 +86,10 @@ check("T3 U-shape -> closed rect", r && r.length === 5 &&
 r = recognizeShape(polyPath(axisRect, 56, 1.5, 0));
 check("T6a mid-edge rect -> 5pts", r && r.length === 5, r && r.length);
 r = recognizeShape(polyPath(tilted, 56, 1.5, 0));
-check("T6b tilted rect keeps orientation", r && r.length === 5 &&
-    (() => {
-        const ang = Math.atan2(r[1].y - r[0].y, r[1].x - r[0].x) * 180 / Math.PI;
-        const f = ((ang % 90) + 90) % 90;
-        return Math.abs(f - 18.4) < 4;
-    })(), r && JSON.stringify(r.map(q => [Math.round(q.x), Math.round(q.y)])));
+check("T6b tilted rect snaps axis-aligned", r && r.length === 5 &&
+    r[0].y === r[1].y && r[2].y === r[3].y && r[0].x === r[3].x && r[1].x === r[2].x &&
+    Math.abs(r[0].y - 0) < 3 && Math.abs(r[1].x - 180) <= 4,
+    JSON.stringify(r && r.map(q => [Math.round(q.x), Math.round(q.y)])));
 {
     const line = [];
     for (let i = 0; i <= 30; i++) line.push({x: 10 + i * 8, y: 50 + Math.sin(i) * 2, p: 0.5});

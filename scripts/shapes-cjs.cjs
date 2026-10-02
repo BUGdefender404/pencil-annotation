@@ -249,16 +249,19 @@ var loopShape = (raw, rectOnly) => {
     if (!best || score < best.score) best = { score, pts };
   };
   {
-    let bRes = Infinity, bPts = null;
+    let bRes = Infinity;
     for (let deg = 0; deg < 90; deg += 3) {
-      const pts = rectCandidate(raw, deg, cx, cy, p);
-      const res = polyResidual(raw, pts);
-      if (res < bRes) {
-        bRes = res;
-        bPts = pts;
-      }
+      bRes = Math.min(bRes, polyResidual(raw, rectCandidate(raw, deg, cx, cy, p)));
     }
-    if (bPts) offer(bRes, bPts, 0.95);
+    if (bRes < Infinity) {
+      offer(bRes, [
+        { x: minX, y: minY, p },
+        { x: maxX, y: minY, p },
+        { x: maxX, y: maxY, p },
+        { x: minX, y: maxY, p },
+        { x: minX, y: minY, p }
+      ], 0.95);
+    }
   }
   if (!rectOnly) {
     const corners = dominantCorners(raw, minX, minY, maxX, maxY);
