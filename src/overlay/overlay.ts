@@ -126,6 +126,14 @@ export class DocOverlay {
         opacity: number;
         simulate: boolean;
     } | null = null;
+    /**
+     * Strokes committed raw because the next stroke started within the
+     * post-lift window. When the user finally pauses, these are perfected
+     * retroactively — so casually drawing a run of boxes still ends with
+     * every one of them a right-angle rectangle.
+     */
+    private rawSnapIds = new Set<string>();
+    private retroSnapTimer: number | null = null;
 
     private constructor(protyle: ProtyleLike, deps: OverlayDeps) {
         this.protyle = protyle;
@@ -590,6 +598,10 @@ export class DocOverlay {
     }
 
     destroy() {
+        if (this.retroSnapTimer !== null) {
+            window.clearTimeout(this.retroSnapTimer);
+            this.retroSnapTimer = null;
+        }
         this.cancelPendingSnap(true);
         this.cancelActiveInput();
         this.stopPan();
@@ -1100,7 +1112,7 @@ export class DocOverlay {
                 this.pendingSnap = null;
                 if (!pending) return;
                 this.commitStroke(pending.snapped, pending.anchor);
-            }, 400),
+            }, 800),
             points,
             snapped,
             anchor,
@@ -1118,7 +1130,51 @@ export class DocOverlay {
         this.pendingSnap = null;
         window.clearTimeout(pending.timer);
         // the stroke was never committed — don't lose the user's ink
-        if (commitRaw) this.commitStroke(pending.points, pending.anchor);
+        if (commitRaw) {
+            const committed = this.commitStroke(pending.points, pending.anchor);
+            if (committed) {
+                // queue it for retroactive perfection once the user pauses
+                this.rawSnapIds.add(committed.id);
+                this.scheduleRetroSnap();
+            }
+        }
+    }
+
+    private scheduleRetroSnap() {
+        if (this.retroSnapTimer !== null) window.clearTimeout(this.retroSnapTimer);
+        this.retroSnapTimer = window.setTimeout(() => {
+            this.retroSnapTimer = null;
+            this.retroSnap();
+        }, 1100);
+    }
+
+    /** perfect the raw-committed shapes once the user pauses drawing */
+    private retroSnap() {
+        if (this.rawSnapIds.size === 0) return;
+        const ids = this.rawSnapIds;
+        this.rawSnapIds = new Set();
+        let changedAny = false;
+        for (const s of this.store.strokes) {
+            if (!ids.has(s.id)) continue;
+            // skip small strokes — handwriting-sized loops must stay raw
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const q of s.points) {
+                if (q.x < minX) minX = q.x;
+                if (q.x > maxX) maxX = q.x;
+                if (q.y < minY) minY = q.y;
+                if (q.y > maxY) maxY = q.y;
+            }
+            if (Math.hypot(maxX - minX, maxY - minY) < 55) continue;
+            const snapped = recognizeShape(s.points);
+            if (!snapped) continue;
+            s.points = snapped;
+            this.renderer.forget(s.id);
+            changedAny = true;
+        }
+        if (changedAny) {
+            this.scheduleRedraw();
+            this.changed();
+        }
     }
 
     /**

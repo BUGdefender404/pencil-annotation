@@ -338,10 +338,10 @@ const loopShape = (raw: Point[], rectOnly: boolean): Point[] | null => {
     // scribbles and dented doodles are not shapes at all — leave them alone
     if (!windsOnce(raw, cx, cy)) return null;
 
-    let best: {score: number; pts: Point[]} | null = null;
+    const best: {score: number; pts: Point[]} = {score: Infinity, pts: []};
     const offer = (res: number, pts: Point[], pref: number) => {
         const score = res * pref;
-        if (!best || score < best.score) best = {score, pts};
+        if (score < best.score) { best.score = score; best.pts = pts; }
     };
 
     // brute-force quad: four corners + straight edges → right-angle rectangle,
@@ -390,6 +390,6 @@ const loopShape = (raw: Point[], rectOnly: boolean): Point[] | null => {
         }
     }
 
-    if (best && best.score <= diag * SNAP_RESIDUAL) return best.pts;
+    if (best.pts.length > 0 && best.score <= diag * SNAP_RESIDUAL) return best.pts;
     return null;
 };

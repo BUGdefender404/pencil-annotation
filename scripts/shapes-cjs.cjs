@@ -291,10 +291,13 @@ var loopShape = (raw, rectOnly) => {
   const p = avgPressure(raw);
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   if (!windsOnce(raw, cx, cy)) return null;
-  let best = null;
+  const best = { score: Infinity, pts: [] };
   const offer = (res, pts, pref) => {
     const score = res * pref;
-    if (!best || score < best.score) best = { score, pts };
+    if (score < best.score) {
+      best.score = score;
+      best.pts = pts;
+    }
   };
   const dc = dominantCorners(raw, minX, minY, maxX, maxY);
   const forced = forcedQuadRect(dc.loop, dc.idx, dc.corners, p);
@@ -336,6 +339,6 @@ var loopShape = (raw, rectOnly) => {
       );
     }
   }
-  if (best && best.score <= diag * SNAP_RESIDUAL) return best.pts;
+  if (best.pts.length > 0 && best.score <= diag * SNAP_RESIDUAL) return best.pts;
   return null;
 };
