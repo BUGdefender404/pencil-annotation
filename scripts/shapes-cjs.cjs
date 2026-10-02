@@ -208,11 +208,12 @@ var forcedQuadRect = (loop, idx, corners, p) => {
   for (let k = 0; k < 4; k++) {
     const a = loop[idx[k]], b = loop[idx[k + 1]];
     const chord = dist(a, b) || 1;
-    let maxDev = 0;
+    let sum = 0, n = 0;
     for (let i = idx[k]; i <= idx[k + 1]; i++) {
-      maxDev = Math.max(maxDev, segDist(loop[i], a, b));
+      sum += segDist(loop[i], a, b);
+      n++;
     }
-    if (maxDev / chord > 0.13) return null;
+    if (sum / n / chord > 0.07) return null;
   }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const pt of loop) {

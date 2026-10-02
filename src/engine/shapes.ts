@@ -227,15 +227,18 @@ const forcedQuadRect = (
         const ang = interiorAngle(cs[(i + 3) % 4], cs[i], cs[(i + 1) % 4]);
         if (ang < 50 || ang > 145) return null;
     }
-    // straight edges (idx has one extra entry: the loop's closing point)
+    // straight edges — judged by MEAN deviation so a single wobble kink on
+    // an edge can't disqualify the box; an ellipse's arc bulges along its
+    // whole length and stays roughly twice above this line
     for (let k = 0; k < 4; k++) {
         const a = loop[idx[k]], b = loop[idx[k + 1]];
         const chord = dist(a, b) || 1;
-        let maxDev = 0;
+        let sum = 0, n = 0;
         for (let i = idx[k]; i <= idx[k + 1]; i++) {
-            maxDev = Math.max(maxDev, segDist(loop[i], a, b));
+            sum += segDist(loop[i], a, b);
+            n++;
         }
-        if (maxDev / chord > 0.13) return null;
+        if (sum / n / chord > 0.07) return null;
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const pt of loop) {
